@@ -120,6 +120,37 @@ describe('generateSchedule', () => {
     expect(Math.max(...offs) - Math.min(...offs)).toBeLessThanOrEqual(2)
   })
 
+  it('does not pile AUTO OFF on top of AL past the weekend OFF target', () => {
+    // Kanokwan-style: 2 AL days → expect OFF ≈ weekend target (8), total leave ≈ 10
+    const leaveRequests = [
+      { id: 'al1', employeeId: 'EMP011', date: '2026-09-11', type: 'AL' as const, requestedAt: '2026-09-01T00:00:00.000Z' },
+      { id: 'al2', employeeId: 'EMP011', date: '2026-09-12', type: 'AL' as const, requestedAt: '2026-09-01T00:00:01.000Z' }
+    ]
+    const r = generateSchedule({ employees, month, shiftAssignments: assignments, leaveRequests, config })
+    const s = r.statistics.perEmployee.find((x) => x.employeeId === 'EMP011')!
+    expect(s.al).toBe(2)
+    expect(s.off).toBeLessThanOrEqual(month.offTarget) // weekend entitlement; AL is separate
+    expect(s.totalLeave).toBe(month.offTarget + s.al)
+    expect(s.maxConsecutive).toBeLessThanOrEqual(5)
+  })
+
+  it('with team AL filling spare leave slots, OFF stays near the weekend target', () => {
+    // 15 staff × ~10 leave slots/person; offTarget 8 → ~2 AL/person keeps OFF≈8
+    const leaveRequests = employees.flatMap((e, i) => {
+      const a = month.days[i].date
+      const b = month.days[i + 15].date
+      return [
+        { id: `al-${e.id}-a`, employeeId: e.id, date: a, type: 'AL' as const, requestedAt: `2026-08-01T00:${String(i).padStart(2, '0')}:00.000Z` },
+        { id: `al-${e.id}-b`, employeeId: e.id, date: b, type: 'AL' as const, requestedAt: `2026-08-01T01:${String(i).padStart(2, '0')}:00.000Z` }
+      ]
+    })
+    const r = generateSchedule({ employees, month, shiftAssignments: assignments, leaveRequests, config })
+    for (const s of r.statistics.perEmployee) {
+      expect(s.off).toBeGreaterThanOrEqual(month.offTarget - 1)
+      expect(s.off).toBeLessThanOrEqual(month.offTarget + 1)
+    }
+  })
+
   it('flags insufficient staffing when AL exceeds capacity', () => {
     const leaveRequests = employees.slice(0, 6).map((e, i) => ({
       id: `al${i}`, employeeId: e.id, date: '2026-09-12', type: 'AL' as const
