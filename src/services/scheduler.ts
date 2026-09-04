@@ -2,7 +2,7 @@
 import type { CellStatus, Employee, ShiftCode } from '@/types/employee'
 import type { GenerateInput, GenerateResult, ScheduleEntry, AssignmentSource } from '@/types/schedule'
 import type { LeaveRequest } from '@/types/leave'
-import { SHIFT_CODES, MAX_CONSECUTIVE_WORKING_DAYS, LAST_RESORT_COVER_FOR, isTransitionAllowed } from './shiftRules'
+import { SHIFT_CODES, MAX_CONSECUTIVE_WORKING_DAYS, LAST_RESORT_COVER_FOR, isTransitionAllowed, canWorkShift } from './shiftRules'
 import { pickOffCandidates, type EmployeeState, type OffPickContext } from './fairness'
 import { cellKey, mulberry32 } from '@/utils/date'
 import { validateSchedule } from './validator'
@@ -155,17 +155,21 @@ export function generateSchedule(input: GenerateInput): GenerateResult {
 
     const working = employees.filter((e) => !leaveToday.has(e.id))
     const assign = new Map<string, ShiftCode>()
+    const homeOf = new Map<string, ShiftCode>()
     working.forEach((e) => {
+      const home = baseShiftOf(e)
+      homeOf.set(e.id, home)
       const locked = shiftLocked.get(e.id)
       if (locked) {
+        // Manual lock still respected; validator will flag illegal A1/A7→A6 locks
         assign.set(e.id, locked)
         return
       }
       const prev = states.get(e.id)?.lastStatus ?? null
-      assign.set(e.id, legalShiftFor(prev, baseShiftOf(e)))
+      assign.set(e.id, legalShiftFor(prev, home, home))
     })
 
-    balanceShifts(working, assign, shiftLocked, states, config.quotas, rng)
+    balanceShifts(working, assign, shiftLocked, states, homeOf, config.quotas, rng)
 
     for (const emp of employees) {
       const leave = leaveToday.get(emp.id)
@@ -203,13 +207,19 @@ export function generateSchedule(input: GenerateInput): GenerateResult {
   return { schedule, conflicts: validation.conflicts, statistics: validation.statistics }
 }
 
-function legalShiftFor(prev: CellStatus | null, preferred: ShiftCode): ShiftCode {
-  if (isTransitionAllowed(prev, preferred)) return preferred
-  const legal = SHIFT_CODES.filter((s) => isTransitionAllowed(prev, s))
-  if (legal.length === 0) return preferred
+function legalShiftFor(prev: CellStatus | null, preferred: ShiftCode, home: ShiftCode): ShiftCode {
+  const eligible = (s: ShiftCode) => canWorkShift(home, s) && isTransitionAllowed(prev, s)
+  if (eligible(preferred)) return preferred
+  const legal = SHIFT_CODES.filter(eligible)
+  if (legal.length === 0) {
+    // Fall back to any home-eligible shift even if transition is imperfect (validator reports)
+    const homeLegal = SHIFT_CODES.filter((s) => canWorkShift(home, s))
+    return homeLegal.includes(preferred) ? preferred : (homeLegal[0] ?? preferred)
+  }
   if (prev && (SHIFT_CODES as string[]).includes(prev) && legal.includes(prev as ShiftCode)) {
     return prev as ShiftCode
   }
+  if (legal.includes(home)) return home
   return legal[0]
 }
 
@@ -219,6 +229,7 @@ function balanceShifts(
   assign: Map<string, ShiftCode>,
   shiftLocked: Map<string, ShiftCode>,
   states: Map<string, EmployeeState>,
+  homeOf: Map<string, ShiftCode>,
   quotas: Record<ShiftCode, number>,
   rng: () => number
 ): void {
@@ -228,10 +239,13 @@ function balanceShifts(
     return c
   }
 
-  const pickMover = (from: ShiftCode, to: ShiftCode): Employee | null => {
+  const pickMover = (from: ShiftCode, to: ShiftCode, requireHome?: ShiftCode): Employee | null => {
     const candidates = working.filter((e) => {
       if (assign.get(e.id) !== from) return false
       if (shiftLocked.has(e.id)) return false
+      const home = homeOf.get(e.id) ?? from
+      if (requireHome && home !== requireHome) return false
+      if (!canWorkShift(home, to)) return false
       const prev = states.get(e.id)?.lastStatus ?? null
       return isTransitionAllowed(prev, to)
     })
@@ -264,8 +278,8 @@ function balanceShifts(
     if (!moved) break
   }
 
-  // Phase 2 (last resort): if A6 is still short (e.g. many A6 on leave),
-  // pull A5 to cover even when A5 is not over quota.
+  // Phase 2 (last resort): if A6 is still short, pull true A5-group staff onto A6
+  // (never A1/A7 who happen to be sitting on A5 that day).
   for (let guard = 0; guard < 20; guard++) {
     const counts = tally()
     const short = SHIFT_CODES.filter((s) => counts[s] < quotas[s])
@@ -276,7 +290,7 @@ function balanceShifts(
       const from = LAST_RESORT_COVER_FOR[to]
       if (!from) continue
       if (counts[to] >= quotas[to]) continue
-      const picked = pickMover(from, to)
+      const picked = pickMover(from, to, from)
       if (!picked) continue
       assign.set(picked.id, to)
       moved = true

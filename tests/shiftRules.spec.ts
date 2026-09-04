@@ -1,6 +1,6 @@
 // tests/shiftRules.spec.ts
 import { describe, expect, it } from 'vitest'
-import { isTransitionAllowed, transitionViolation, TRANSITION_MATRIX, SHIFT_CODES, LAST_RESORT_COVER_FOR } from '@/services/shiftRules'
+import { isTransitionAllowed, transitionViolation, TRANSITION_MATRIX, SHIFT_CODES, LAST_RESORT_COVER_FOR, canWorkShift } from '@/services/shiftRules'
 
 describe('shift transition rules', () => {
   it('matches the documented allow matrix', () => {
@@ -60,5 +60,15 @@ describe('shift transition rules', () => {
     expect(TRANSITION_MATRIX.A5.A6).toBe(true)
     expect(LAST_RESORT_COVER_FOR.A6).toBe('A5')
     expect(isTransitionAllowed('A5', 'A6')).toBe(true)
+  })
+
+  it('blocks A1/A7 monthly groups from ever working A6', () => {
+    expect(canWorkShift('A1', 'A6')).toBe(false)
+    expect(canWorkShift('A7', 'A6')).toBe(false)
+    expect(canWorkShift('A5', 'A6')).toBe(true)
+    expect(canWorkShift('A6', 'A6')).toBe(true)
+    // OFF resets day-to-day transition, but home-group rule still forbids A6
+    expect(isTransitionAllowed('OFF', 'A6')).toBe(true)
+    expect(canWorkShift('A7', 'A6')).toBe(false)
   })
 })

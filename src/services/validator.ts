@@ -6,7 +6,7 @@ import type {
   ScheduleStatistics, SchedulerConfig, ShiftAssignmentMap
 } from '@/types/schedule'
 import type { Conflict } from '@/types/conflict'
-import { SHIFT_CODES, MAX_CONSECUTIVE_WORKING_DAYS, isShift, transitionViolation } from './shiftRules'
+import { SHIFT_CODES, MAX_CONSECUTIVE_WORKING_DAYS, isShift, transitionViolation, canWorkShift } from './shiftRules'
 import { cellKey } from '@/utils/date'
 
 export interface ValidateInput {
@@ -69,6 +69,16 @@ export function validateSchedule(input: ValidateInput): ValidationResult {
         working++
         streak++
         maxStreak = Math.max(maxStreak, streak)
+        if (assigned && isShift(status) && !canWorkShift(assigned, status)) {
+          push({
+            type: 'FORBIDDEN_SHIFT_FOR_GROUP', severity: 'ERROR',
+            rule: 'A1/A7 monthly group must never work A6',
+            date: day.date, employeeId: emp.id,
+            message: `${emp.name}: monthly ${assigned} cannot work ${status}`,
+            meta: { home: assigned, shift: status }
+          })
+          bump(emp.id)
+        }
         if (streak > MAX_CONSECUTIVE_WORKING_DAYS) {
           push({
             type: 'TOO_MANY_CONSECUTIVE_WORKING_DAYS', severity: 'ERROR',

@@ -28,10 +28,20 @@ export const TRANSITION_MATRIX: Record<ShiftCode, Record<ShiftCode, boolean>> = 
 
 /**
  * When A6 is short on working staff (e.g. many A6 leave requests),
- * pull from this shift as a last resort even if it goes under its own quota.
+ * pull from this home group as a last resort even if it goes under its own quota.
+ * Only A5-group staff may cover A6 — A1/A7 never work A6 within the month.
  */
 export const LAST_RESORT_COVER_FOR: Partial<Record<ShiftCode, ShiftCode>> = {
   A6: 'A5'
+}
+
+/**
+ * Monthly home-group eligibility for a working cell.
+ * A1/A7 staff must never be placed on A6 (even after OFF, which resets day-to-day transitions).
+ */
+export function canWorkShift(homeShift: ShiftCode, target: ShiftCode): boolean {
+  if (target === 'A6') return homeShift === 'A6' || homeShift === 'A5'
+  return true
 }
 
 /** A6 -> A5 requires at least 1 OFF/AL day in between. */

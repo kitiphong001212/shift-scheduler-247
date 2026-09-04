@@ -71,4 +71,14 @@ describe('validateSchedule', () => {
     })
     expect(r.conflicts.some((c) => c.type === 'DUPLICATE_LEAVE')).toBe(true)
   })
+
+  it('flags A7 monthly group working A6', () => {
+    const a7: Employee = { id: 'E7', code: 'E7', name: 'Kittiphong', active: true, defaultShift: 'A7' }
+    const r = validateSchedule({
+      employees: [a7], month,
+      entries: [{ employeeId: 'E7', date: '2026-09-28', shift: 'A6', source: 'AUTO' }],
+      shiftAssignments: { E7: 'A7' }, leaveRequests: [], config
+    })
+    expect(r.conflicts.some((c) => c.type === 'FORBIDDEN_SHIFT_FOR_GROUP' && c.employeeId === 'E7')).toBe(true)
+  })
 })

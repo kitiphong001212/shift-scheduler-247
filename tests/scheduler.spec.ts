@@ -194,6 +194,17 @@ describe('generateSchedule', () => {
     }
     const a6Working = onDay.filter((c) => c.shift === 'A6')
     expect(a6Working.length).toBe(config.quotas.A6)
-    expect(a6Working.some((c) => assignments[c.employeeId] === 'A5')).toBe(true)
+    expect(a6Working.every((c) => assignments[c.employeeId] === 'A5')).toBe(true)
+  })
+
+  it('never places A1/A7 monthly group onto A6 (Kittiphong rule)', () => {
+    const r = generateSchedule({ employees, month, shiftAssignments: assignments, leaveRequests: [], config })
+    for (const e of r.schedule) {
+      const home = assignments[e.employeeId]
+      if ((home === 'A1' || home === 'A7') && e.shift === 'A6') {
+        throw new Error(`${e.employeeId} home ${home} was placed on A6 at ${e.date}`)
+      }
+    }
+    expect(r.conflicts.filter((c) => c.type === 'FORBIDDEN_SHIFT_FOR_GROUP').length).toBe(0)
   })
 })

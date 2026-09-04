@@ -12,6 +12,7 @@ export type ConflictType =
   | 'DUPLICATE_LEAVE'
   | 'AL_OVER_CAPACITY'
   | 'OVERSTAFFED'
+  | 'FORBIDDEN_SHIFT_FOR_GROUP'
 
 export interface Conflict {
   id: string
