@@ -36,12 +36,31 @@ export const LAST_RESORT_COVER_FOR: Partial<Record<ShiftCode, ShiftCode>> = {
 }
 
 /**
- * Monthly home-group eligibility for a working cell.
- * A1/A7 staff must never be placed on A6 (even after OFF, which resets day-to-day transitions).
+ * Max consecutive A6 days for A5-home cover staff.
+ * A6→A5 needs a rest day, so once covering they stay on A6 until leave —
+ * force rest after this many cover days so A5 is not stuck on A6 for a long block.
  */
+export const MAX_CONSECUTIVE_A6_COVER = 2
+
+/**
+ * Shifts each monthly home group may work (even after OFF resets day-to-day transitions).
+ * A5 never works A1/A7; A1/A7 never work A6; A6 stays on overnight family (A6/A5).
+ */
+export const HOME_ELIGIBLE: Record<ShiftCode, readonly ShiftCode[]> = {
+  A1: ['A1', 'A7', 'A5'],
+  A7: ['A1', 'A7', 'A5'],
+  A5: ['A5', 'A6'],
+  A6: ['A6', 'A5']
+}
+
+/** Monthly home-group eligibility for a working cell. */
 export function canWorkShift(homeShift: ShiftCode, target: ShiftCode): boolean {
-  if (target === 'A6') return homeShift === 'A6' || homeShift === 'A5'
-  return true
+  return HOME_ELIGIBLE[homeShift].includes(target)
+}
+
+/** True when this home→target pair is last-resort cover (not free rebalance). */
+export function isLastResortCover(home: ShiftCode, target: ShiftCode): boolean {
+  return LAST_RESORT_COVER_FOR[target] === home
 }
 
 /** A6 -> A5 requires at least 1 OFF/AL day in between. */

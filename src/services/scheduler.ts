@@ -2,7 +2,7 @@
 import type { CellStatus, Employee, ShiftCode } from '@/types/employee'
 import type { GenerateInput, GenerateResult, ScheduleEntry, AssignmentSource } from '@/types/schedule'
 import type { LeaveRequest } from '@/types/leave'
-import { SHIFT_CODES, MAX_CONSECUTIVE_WORKING_DAYS, LAST_RESORT_COVER_FOR, isTransitionAllowed, canWorkShift, isShift } from './shiftRules'
+import { SHIFT_CODES, MAX_CONSECUTIVE_WORKING_DAYS, MAX_CONSECUTIVE_A6_COVER, LAST_RESORT_COVER_FOR, isTransitionAllowed, canWorkShift, isLastResortCover, isShift } from './shiftRules'
 import { pickOffCandidates, pickAlCandidates, type EmployeeState, type OffPickContext } from './fairness'
 import { cellKey, mulberry32 } from '@/utils/date'
 import { validateSchedule } from './validator'
@@ -54,7 +54,15 @@ export function generateSchedule(input: GenerateInput): GenerateResult {
 
   const states = new Map<string, EmployeeState>()
   employees.forEach((e) =>
-    states.set(e.id, { offCount: 0, alCount: 0, workStreak: 0, lastStatus: null, shiftMoveCount: 0 })
+    states.set(e.id, {
+      offCount: 0,
+      alCount: 0,
+      workStreak: 0,
+      lastStatus: null,
+      shiftMoveCount: 0,
+      a6CoverStreak: 0,
+      a6CoverDays: 0
+    })
   )
 
   const schedule: ScheduleEntry[] = []
@@ -82,10 +90,14 @@ export function generateSchedule(input: GenerateInput): GenerateResult {
 
     // Hard rule: after MAX consecutive working days, must rest today.
     // Prefer OFF while under weekend target; otherwise forced AL.
+    // Also end A5→A6 cover after MAX_CONSECUTIVE_A6_COVER days (cannot return to A5 without rest).
     for (const emp of employees) {
       if (leaveToday.has(emp.id) || shiftLocked.has(emp.id)) continue
       const st = states.get(emp.id)!
-      if (st.workStreak >= MAX_CONSECUTIVE_WORKING_DAYS) {
+      const home = baseShiftOf(emp)
+      const coverCap =
+        home === 'A5' && st.lastStatus === 'A6' && st.a6CoverStreak >= MAX_CONSECUTIVE_A6_COVER
+      if (st.workStreak >= MAX_CONSECUTIVE_WORKING_DAYS || coverCap) {
         const status = st.offCount < month.offTarget ? 'OFF' : 'AL'
         leaveToday.set(emp.id, { status, source: 'AUTO' })
       }
@@ -194,11 +206,19 @@ export function generateSchedule(input: GenerateInput): GenerateResult {
         if (leave.status === 'OFF') st.offCount++
         else st.alCount++
         st.workStreak = 0
+        st.a6CoverStreak = 0
       } else {
         status = assign.get(emp.id) ?? baseShiftOf(emp)
         source = shiftLocked.has(emp.id) ? 'MANUAL' : 'AUTO'
         st.workStreak++
         if (status !== baseShiftOf(emp)) st.shiftMoveCount++
+        const home = baseShiftOf(emp)
+        if (home === 'A5' && status === 'A6') {
+          st.a6CoverStreak++
+          st.a6CoverDays++
+        } else {
+          st.a6CoverStreak = 0
+        }
       }
 
       st.lastStatus = status
@@ -347,16 +367,37 @@ function balanceShifts(
       const home = homeOf.get(e.id) ?? from
       if (requireHome && home !== requireHome) return false
       if (!canWorkShift(home, to)) return false
+      // Fresh A6 cover only — do not extend someone already at cover cap via rebalance
+      if (isLastResortCover(home, to)) {
+        const st = states.get(e.id)!
+        if (st.a6CoverStreak >= MAX_CONSECUTIVE_A6_COVER) return false
+      }
       const prev = states.get(e.id)?.lastStatus ?? null
       return isTransitionAllowed(prev, to)
     })
     if (candidates.length === 0) return null
-    const minMoves = Math.min(...candidates.map((e) => states.get(e.id)!.shiftMoveCount))
-    const tied = candidates.filter((e) => states.get(e.id)!.shiftMoveCount === minMoves)
+    // Prefer least A6 cover days this month, then fewest moves
+    candidates.sort((a, b) => {
+      const sa = states.get(a.id)!
+      const sb = states.get(b.id)!
+      if (sa.a6CoverDays !== sb.a6CoverDays) return sa.a6CoverDays - sb.a6CoverDays
+      return sa.shiftMoveCount - sb.shiftMoveCount
+    })
+    const bestCover = states.get(candidates[0]!.id)!.a6CoverDays
+    const minMoves = Math.min(
+      ...candidates
+        .filter((e) => states.get(e.id)!.a6CoverDays === bestCover)
+        .map((e) => states.get(e.id)!.shiftMoveCount)
+    )
+    const tied = candidates.filter((e) => {
+      const st = states.get(e.id)!
+      return st.a6CoverDays === bestCover && st.shiftMoveCount === minMoves
+    })
     return tied[Math.floor(rng() * tied.length)] ?? null
   }
 
-  // Phase 1: normal rebalance — only move from over-quota → under-quota
+  // Phase 1: normal rebalance — only move from over-quota → under-quota.
+  // Do not freely dump A5 onto A6; that is last-resort only.
   for (let guard = 0; guard < 60; guard++) {
     const counts = tally()
     const over = SHIFT_CODES.filter((s) => counts[s] > quotas[s])
@@ -369,6 +410,7 @@ function balanceShifts(
     let moved = false
     outer: for (const from of over) {
       for (const to of under) {
+        if (LAST_RESORT_COVER_FOR[to]) continue // cover fills only in phase 2
         const picked = pickMover(from, to)
         if (!picked) continue
         assign.set(picked.id, to)
@@ -380,7 +422,7 @@ function balanceShifts(
   }
 
   // Phase 2 (last resort): if A6 is still short, pull true A5-group staff onto A6
-  // (never A1/A7 who happen to be sitting on A5 that day).
+  // for a few days only (cover streak capped; prefer staff with fewest A6 days).
   for (let guard = 0; guard < 20; guard++) {
     const counts = tally()
     const short = SHIFT_CODES.filter((s) => counts[s] < quotas[s])

@@ -1,7 +1,7 @@
 // src/services/fairness.ts
 import type { Employee, ShiftCode, CellStatus } from '@/types/employee'
 import type { OffPolicy } from '@/types/schedule'
-import { MAX_CONSECUTIVE_WORKING_DAYS } from './shiftRules'
+import { MAX_CONSECUTIVE_WORKING_DAYS, MAX_CONSECUTIVE_A6_COVER } from './shiftRules'
 
 export interface EmployeeState {
   offCount: number
@@ -9,6 +9,10 @@ export interface EmployeeState {
   workStreak: number
   lastStatus: CellStatus | null
   shiftMoveCount: number
+  /** Consecutive A6 days while home group is A5 (cover streak). */
+  a6CoverStreak: number
+  /** Total A6 cover days this month for A5-home staff. */
+  a6CoverDays: number
 }
 
 export interface OffPickContext {
@@ -72,6 +76,13 @@ export function scoreForOff(employee: Employee, ctx: OffPickContext): number {
   else if (st.workStreak === MAX_CONSECUTIVE_WORKING_DAYS - 2 && remainingOff > 0) score += 60
 
   if (st.lastStatus === 'A6' && remainingOff > 0) score += 50
+
+  // A5 covering A6 cannot return to A5 without rest — end cover after a few days
+  const home = ctx.assignedShift.get(employee.id)
+  if (home === 'A5' && st.lastStatus === 'A6') {
+    score += 800 + st.a6CoverStreak * 400
+    if (st.a6CoverStreak >= MAX_CONSECUTIVE_A6_COVER) score += 5_000
+  }
 
   // Avoid OFF/AL clustering
   if (st.lastStatus === 'OFF' || st.lastStatus === 'AL') score -= 80
