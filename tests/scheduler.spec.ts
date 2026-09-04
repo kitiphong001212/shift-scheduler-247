@@ -42,13 +42,49 @@ describe('generateSchedule', () => {
     expect(cells.find((c) => c.date === '2026-09-06')?.source).toBe('REQUEST')
   })
 
-  it('never aborts when leave requests exceed the daily quota', () => {
+  it('grants OFF first-come when requests exceed the daily quota', () => {
     const leaveRequests = employees.slice(0, 7).map((e, i) => ({
-      id: `x${i}`, employeeId: e.id, date: '2026-09-10', type: 'OFF' as const
+      id: `x${i}`, employeeId: e.id, date: '2026-09-10', type: 'OFF' as const,
+      requestedAt: new Date(Date.UTC(2026, 8, 1, 8, i)).toISOString()
     }))
     const r = generateSchedule({ employees, month, shiftAssignments: assignments, leaveRequests, config })
     expect(r.schedule.length).toBe(15 * 30)
-    expect(r.conflicts.some((c) => c.type === 'TOO_MANY_LEAVE_REQUEST')).toBe(true)
+    const onDay = r.schedule.filter((e) => e.date === '2026-09-10')
+    expect(onDay.filter((e) => e.shift === 'OFF').length).toBe(5)
+    expect(onDay.find((e) => e.employeeId === 'EMP001')?.shift).toBe('OFF')
+    expect(onDay.find((e) => e.employeeId === 'EMP005')?.shift).toBe('OFF')
+    expect(onDay.find((e) => e.employeeId === 'EMP006')?.shift).not.toBe('OFF')
+    expect(onDay.find((e) => e.employeeId === 'EMP007')?.shift).not.toBe('OFF')
+    expect(r.conflicts.some((c) => c.type === 'INSUFFICIENT_STAFF' && c.date === '2026-09-10')).toBe(false)
+  })
+
+  it('honors requestedAt order, not employee list order', () => {
+    const leaveRequests = employees.slice(0, 6).map((e, i) => ({
+      id: `late${i}`, employeeId: e.id, date: '2026-09-11', type: 'OFF' as const,
+      requestedAt: new Date(Date.UTC(2026, 8, 1, 18, 0, 5 - i)).toISOString()
+    }))
+    const r = generateSchedule({ employees, month, shiftAssignments: assignments, leaveRequests, config })
+    const onDay = r.schedule.filter((e) => e.date === '2026-09-11')
+    expect(onDay.find((e) => e.employeeId === 'EMP006')?.shift).toBe('OFF')
+    expect(onDay.find((e) => e.employeeId === 'EMP001')?.shift).not.toBe('OFF')
+  })
+
+  it('reduces OFF quota by AL and fills leftover slots with people who did not request', () => {
+    const leaveRequests = [
+      { id: 'al1', employeeId: 'EMP001', date: '2026-09-15', type: 'AL' as const, requestedAt: '2026-09-01T00:00:00.000Z' },
+      { id: 'al2', employeeId: 'EMP002', date: '2026-09-15', type: 'AL' as const, requestedAt: '2026-09-01T00:00:01.000Z' },
+      { id: 'off1', employeeId: 'EMP003', date: '2026-09-15', type: 'OFF' as const, requestedAt: '2026-09-01T00:00:02.000Z' }
+    ]
+    const r = generateSchedule({ employees, month, shiftAssignments: assignments, leaveRequests, config })
+    const onDay = r.schedule.filter((e) => e.date === '2026-09-15')
+    expect(onDay.filter((e) => e.shift === 'AL').length).toBe(2)
+    expect(onDay.filter((e) => e.shift === 'OFF').length).toBe(3)
+    expect(onDay.find((e) => e.employeeId === 'EMP003')?.shift).toBe('OFF')
+    expect(onDay.find((e) => e.employeeId === 'EMP003')?.source).toBe('REQUEST')
+    const autoOff = onDay.filter((e) => e.shift === 'OFF' && e.source === 'AUTO')
+    expect(autoOff.length).toBe(2)
+    expect(autoOff.every((e) => e.employeeId !== 'EMP001' && e.employeeId !== 'EMP002' && e.employeeId !== 'EMP003')).toBe(true)
+    expect(onDay.filter((e) => e.shift !== 'OFF' && e.shift !== 'AL').length).toBe(10)
   })
 
   it('produces no forbidden shift transitions', () => {

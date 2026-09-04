@@ -1,15 +1,33 @@
 // src/services/scheduler.ts
 import type { CellStatus, Employee, ShiftCode } from '@/types/employee'
 import type { GenerateInput, GenerateResult, ScheduleEntry, AssignmentSource } from '@/types/schedule'
-import type { LeaveType } from '@/types/leave'
+import type { LeaveRequest } from '@/types/leave'
 import { SHIFT_CODES, isTransitionAllowed } from './shiftRules'
 import { pickOffCandidates, type EmployeeState, type OffPickContext } from './fairness'
 import { cellKey, mulberry32 } from '@/utils/date'
 import { validateSchedule } from './validator'
 
+/** Daily OFF slots after AL is locked: N − required working − AL. */
+export function dailyOffQuota(staffCount: number, requiredWorking: number, alCount: number): number {
+  return Math.max(0, staffCount - requiredWorking - alCount)
+}
+
+export function compareOffRequestOrder(a: LeaveRequest, b: LeaveRequest): number {
+  const ta = a.requestedAt ?? ''
+  const tb = b.requestedAt ?? ''
+  if (ta !== tb) return ta.localeCompare(tb)
+  return a.id.localeCompare(b.id)
+}
+
 /**
  * Generate-first, report-later.
  * This function NEVER throws and NEVER aborts on conflicts.
+ *
+ * OFF assignment:
+ * 1. AL is locked and reduces the day's OFF quota.
+ * 2. OFF requests are granted first-come (requestedAt) up to remaining quota.
+ *    Late requests past quota must work that day (not eligible for AUTO OFF).
+ * 3. Leftover quota is filled with Fair Random among people who did not request OFF.
  */
 export function generateSchedule(input: GenerateInput): GenerateResult {
   const { month, config, shiftAssignments } = input
@@ -18,17 +36,9 @@ export function generateSchedule(input: GenerateInput): GenerateResult {
   const rng = mulberry32(config.seed)
   const dateSet = new Set(month.days.map((d) => d.date))
 
-  // ---- Priority 1 & 2: lock AL then OFF requests -------------------------
-  const requestMap = new Map<string, LeaveType>()
   const activeIds = new Set(employees.map((e) => e.id))
-  for (const r of input.leaveRequests) {
-    if (!activeIds.has(r.employeeId) || !dateSet.has(r.date)) continue
-    const k = cellKey(r.employeeId, r.date)
-    if (requestMap.get(k) === 'AL') continue   // AL wins over OFF
-    requestMap.set(k, r.type)
-  }
+  const requests = input.leaveRequests.filter((r) => activeIds.has(r.employeeId) && dateSet.has(r.date))
 
-  // ---- Manual locks preserved across regeneration (optional) ------------
   const manualMap = new Map<string, CellStatus>()
   for (const e of input.lockedEntries ?? []) {
     if (e.source === 'MANUAL' && activeIds.has(e.employeeId) && dateSet.has(e.date)) {
@@ -46,10 +56,10 @@ export function generateSchedule(input: GenerateInput): GenerateResult {
 
   const schedule: ScheduleEntry[] = []
 
-  // ---- Day by day -------------------------------------------------------
   month.days.forEach((day, dayIndex) => {
     const leaveToday = new Map<string, { status: 'OFF' | 'AL'; source: AssignmentSource }>()
     const shiftLocked = new Map<string, ShiftCode>()
+    const mustWork = new Set<string>()
 
     for (const emp of employees) {
       const k = cellKey(emp.id, day.date)
@@ -58,27 +68,42 @@ export function generateSchedule(input: GenerateInput): GenerateResult {
         leaveToday.set(emp.id, { status: manual, source: 'MANUAL' })
       } else if (manual) {
         shiftLocked.set(emp.id, manual)
-      } else {
-        const req = requestMap.get(k)
-        if (req) leaveToday.set(emp.id, { status: req, source: 'REQUEST' })
       }
     }
 
+    for (const r of requests) {
+      if (r.date !== day.date || r.type !== 'AL') continue
+      if (leaveToday.has(r.employeeId) || shiftLocked.has(r.employeeId)) continue
+      leaveToday.set(r.employeeId, { status: 'AL', source: 'REQUEST' })
+    }
+
     const alCount = [...leaveToday.values()].filter((v) => v.status === 'AL').length
-    const offRequested = [...leaveToday.values()].filter((v) => v.status === 'OFF').length
+    const offQuota = dailyOffQuota(N, config.requiredWorking, alCount)
+    const alreadyOff = [...leaveToday.values()].filter((v) => v.status === 'OFF').length
+    let remaining = Math.max(0, offQuota - alreadyOff)
 
-    // §6 formula — clamped, conflicts are reported by the validator
-    const offRequired = Math.max(0, N - config.requiredWorking - alCount)
-    const need = offRequired - offRequested
+    const offReqs = requests
+      .filter((r) => r.date === day.date && r.type === 'OFF')
+      .filter((r) => !leaveToday.has(r.employeeId) && !shiftLocked.has(r.employeeId))
+      .sort(compareOffRequestOrder)
 
-    if (need > 0) {
+    for (const r of offReqs) {
+      if (remaining > 0) {
+        leaveToday.set(r.employeeId, { status: 'OFF', source: 'REQUEST' })
+        remaining -= 1
+      } else {
+        mustWork.add(r.employeeId)
+      }
+    }
+
+    if (remaining > 0) {
       const availableByShift = SHIFT_CODES.reduce((acc, s) => {
         acc[s] = 0
         return acc
       }, {} as Record<ShiftCode, number>)
 
       const candidates = employees.filter(
-        (e) => !leaveToday.has(e.id) && !shiftLocked.has(e.id)
+        (e) => !leaveToday.has(e.id) && !shiftLocked.has(e.id) && !mustWork.has(e.id)
       )
       const assignedShift = new Map<string, ShiftCode>()
       for (const e of employees) {
@@ -99,19 +124,25 @@ export function generateSchedule(input: GenerateInput): GenerateResult {
         rng
       }
 
-      pickOffCandidates(candidates, need, ctx).forEach((e) =>
+      pickOffCandidates(candidates, remaining, ctx).forEach((e) =>
         leaveToday.set(e.id, { status: 'OFF', source: 'AUTO' })
       )
     }
 
-    // ---- Shift placement + rebalance to meet daily quota ----------------
     const working = employees.filter((e) => !leaveToday.has(e.id))
     const assign = new Map<string, ShiftCode>()
-    working.forEach((e) => assign.set(e.id, shiftLocked.get(e.id) ?? baseShiftOf(e)))
+    working.forEach((e) => {
+      const locked = shiftLocked.get(e.id)
+      if (locked) {
+        assign.set(e.id, locked)
+        return
+      }
+      const prev = states.get(e.id)?.lastStatus ?? null
+      assign.set(e.id, legalShiftFor(prev, baseShiftOf(e)))
+    })
 
     balanceShifts(working, assign, shiftLocked, states, config.quotas, rng)
 
-    // ---- Commit the day -------------------------------------------------
     for (const emp of employees) {
       const leave = leaveToday.get(emp.id)
       const st = states.get(emp.id)!
@@ -136,7 +167,6 @@ export function generateSchedule(input: GenerateInput): GenerateResult {
     }
   })
 
-  // ---- Then validate ----------------------------------------------------
   const validation = validateSchedule({
     employees: input.employees,
     month,
@@ -147,6 +177,16 @@ export function generateSchedule(input: GenerateInput): GenerateResult {
   })
 
   return { schedule, conflicts: validation.conflicts, statistics: validation.statistics }
+}
+
+function legalShiftFor(prev: CellStatus | null, preferred: ShiftCode): ShiftCode {
+  if (isTransitionAllowed(prev, preferred)) return preferred
+  const legal = SHIFT_CODES.filter((s) => isTransitionAllowed(prev, s))
+  if (legal.length === 0) return preferred
+  if (prev && (SHIFT_CODES as string[]).includes(prev) && legal.includes(prev as ShiftCode)) {
+    return prev as ShiftCode
+  }
+  return legal[0]
 }
 
 /** Move people between shift groups (legal transitions only) to hit daily quotas. */
@@ -184,7 +224,6 @@ function balanceShifts(
         })
         if (candidates.length === 0) continue
 
-        // fairest: whoever has been moved the least this month
         const minMoves = Math.min(...candidates.map((e) => states.get(e.id)!.shiftMoveCount))
         const tied = candidates.filter((e) => states.get(e.id)!.shiftMoveCount === minMoves)
         const picked = tied[Math.floor(rng() * tied.length)]
@@ -194,8 +233,6 @@ function balanceShifts(
         break outer
       }
     }
-    // No legal move left → keep the quota mismatch (WARNING) instead of
-    // creating an INVALID_SHIFT_TRANSITION (ERROR).
     if (!moved) break
   }
 }

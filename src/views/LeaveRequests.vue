@@ -4,17 +4,24 @@ import { computed, reactive, ref } from 'vue'
 import { useLeaveStore } from '@/stores/leaveStore'
 import { useEmployeeStore } from '@/stores/employeeStore'
 import { useScheduleStore } from '@/stores/scheduleStore'
+
 import { useSettingsStore } from '@/stores/settingsStore'
 import { WEEKDAY_LABELS } from '@/utils/date'
+
+import { WEEKDAY_LABELS, cellKey } from '@/utils/date'
+ 2c94369 (Update shift scheduler)
 import type { LeaveType } from '@/types/leave'
 import ConflictBadge from '@/components/ConflictBadge.vue'
 
 const leaveStore = useLeaveStore()
 const employeeStore = useEmployeeStore()
 const schedule = useScheduleStore()
-const settings = useSettingsStore()
 
+ HEAD
 const filter = ref<'ALL' | 'OFF' | 'AL' | 'CONFLICT'>('ALL')
+
+const filter = ref<'ALL' | 'OFF' | 'AL' | 'DENIED'>('ALL')
+ 2c94369 (Update shift scheduler)
 const form = reactive<{ employeeId: string; type: LeaveType; note: string }>({
   employeeId: employeeStore.activeEmployees[0]?.id ?? '',
   type: 'AL',
@@ -26,16 +33,34 @@ const lastClicked = ref<string | null>(null)
 const conflictDates = computed(() => {
   const s = new Set<string>()
   for (const c of schedule.conflicts) {
-    if (c.date && (c.type === 'TOO_MANY_LEAVE_REQUEST' || c.type === 'DUPLICATE_LEAVE' || c.type === 'AL_OVER_CAPACITY')) s.add(c.date)
+    if (c.date && (c.type === 'DUPLICATE_LEAVE' || c.type === 'AL_OVER_CAPACITY')) s.add(c.date)
   }
   return s
 })
 
+function requestOutcome(employeeId: string, date: string, type: LeaveType): 'pending' | 'granted' | 'must-work' | 'conflict' {
+  if (conflictDates.value.has(date) && type === 'AL') return 'conflict'
+  if (!schedule.hasSchedule) return 'pending'
+  const cell = schedule.cellMap[cellKey(employeeId, date)]
+  if (!cell) return 'pending'
+  if (type === 'AL') return cell.shift === 'AL' ? 'granted' : 'conflict'
+  return cell.shift === 'OFF' ? 'granted' : 'must-work'
+}
+
 const rows = computed(() => {
-  const all = leaveStore.byMonth(schedule.monthKey).slice().sort((a, b) => a.date.localeCompare(b.date))
+  const all = leaveStore.byMonth(schedule.monthKey).slice().sort((a, b) => {
+    const d = a.date.localeCompare(b.date)
+    if (d !== 0) return d
+    return (a.requestedAt ?? '').localeCompare(b.requestedAt ?? '') || a.id.localeCompare(b.id)
+  })
   if (filter.value === 'OFF') return all.filter((r) => r.type === 'OFF')
   if (filter.value === 'AL') return all.filter((r) => r.type === 'AL')
-  if (filter.value === 'CONFLICT') return all.filter((r) => conflictDates.value.has(r.date))
+  if (filter.value === 'DENIED') {
+    return all.filter((r) => {
+      const o = requestOutcome(r.employeeId, r.date, r.type)
+      return o === 'must-work' || o === 'conflict'
+    })
+  }
   return all
 })
 
@@ -101,10 +126,10 @@ function add() {
     <header class="flex flex-wrap items-center justify-between gap-3">
       <div>
         <h1 class="text-xl font-semibold">Leave Requests</h1>
-        <p class="text-sm text-slate-500">{{ schedule.monthContext.label }} · daily leave quota {{ Math.max(0, employeeStore.activeEmployees.length - settings.requiredWorking) }}</p>
+        <p class="text-sm text-slate-500">{{ schedule.monthContext.label }} · OFF quota = staff − required working − AL that day · earlier requests win</p>
       </div>
       <div class="flex gap-1">
-        <button v-for="f in (['ALL','OFF','AL','CONFLICT'] as const)" :key="f"
+        <button v-for="f in (['ALL','OFF','AL','DENIED'] as const)" :key="f"
                 class="rounded-md px-3 py-1.5 text-xs font-semibold"
                 :class="filter === f ? 'bg-slate-900 text-white' : 'bg-white text-slate-600 border border-slate-300'"
                 @click="filter = f">{{ f }}</button>
@@ -171,15 +196,16 @@ function add() {
       <table class="w-full">
         <thead>
           <tr>
-            <th class="th">Employee</th><th class="th">Date</th><th class="th">Type</th>
+            <th class="th">Employee</th><th class="th">Date</th><th class="th">Requested</th><th class="th">Type</th>
             <th class="th">Status</th><th class="th text-right">Actions</th>
           </tr>
         </thead>
         <tbody>
-          <tr v-if="!rows.length"><td class="td text-slate-400" colspan="5">No requests.</td></tr>
+          <tr v-if="!rows.length"><td class="td text-slate-400" colspan="6">No requests.</td></tr>
           <tr v-for="r in rows" :key="r.id">
             <td class="td">{{ employeeStore.nameOf(r.employeeId) }}</td>
             <td class="td font-mono text-xs">{{ r.date }}</td>
+            <td class="td font-mono text-xs text-slate-500">{{ r.requestedAt ? new Date(r.requestedAt).toLocaleString() : '—' }}</td>
             <td class="td">
               <select class="input max-w-[90px]" :value="r.type"
                       @change="leaveStore.updateRequest(r.id, { type: ($event.target as HTMLSelectElement).value as LeaveType })">
@@ -187,8 +213,10 @@ function add() {
               </select>
             </td>
             <td class="td">
-              <ConflictBadge v-if="conflictDates.has(r.date)" severity="WARNING" label="Over quota" />
-              <span v-else class="text-xs text-emerald-600 font-semibold">OK</span>
+              <ConflictBadge v-if="requestOutcome(r.employeeId, r.date, r.type) === 'must-work'" severity="WARNING" label="Must work" />
+              <ConflictBadge v-else-if="requestOutcome(r.employeeId, r.date, r.type) === 'conflict'" severity="ERROR" label="Conflict" />
+              <span v-else-if="requestOutcome(r.employeeId, r.date, r.type) === 'pending'" class="text-xs text-slate-400 font-semibold">Pending generate</span>
+              <span v-else class="text-xs text-emerald-600 font-semibold">Granted</span>
             </td>
             <td class="td text-right">
               <button class="btn-danger px-2 py-1" @click="leaveStore.removeRequest(r.id)">Delete</button>

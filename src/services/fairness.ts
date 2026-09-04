@@ -21,33 +21,27 @@ export interface OffPickContext {
   rng: () => number
 }
 
-/** Higher score = should get OFF today. */
+/** Higher score = should get OFF today. Used only for leftover quota (not requested OFF). */
 export function scoreForOff(employee: Employee, ctx: OffPickContext): number {
   const st = ctx.states.get(employee.id)
   if (!st) return -Infinity
 
   const remainingOff = ctx.offTarget - st.offCount
   const urgency = remainingOff / Math.max(1, ctx.daysRemaining)
-  let score = urgency * 100
+  let score = remainingOff * 40 + urgency * 80
 
-  // Priority 6 — must break a long streak
-  if (st.workStreak >= 5) score += 60
-  else if (st.workStreak === 4) score += 20
+  if (st.workStreak >= 5) score += 500
+  else if (st.workStreak === 4) score += 80
 
-  // Rest rule after night shift
-  if (st.lastStatus === 'A6') score += 25
+  if (st.lastStatus === 'A6') score += 80
 
-  // Avoid clustering OFF blocks
   if (st.lastStatus === 'OFF' || st.lastStatus === 'AL') score -= 25
 
-  // Do not starve a shift group below its daily quota
   const shift = ctx.assignedShift.get(employee.id)
   if (shift && ctx.availableByShift[shift] - 1 < ctx.quotas[shift]) score -= 200
 
-  // Already met the entitlement
   if (remainingOff <= 0) score -= ctx.offPolicy === 'ENTITLEMENT_FIRST' ? 10_000 : 150
 
-  // Priority 8 — randomized tie-breaking
   score += ctx.rng() * 5
   return score
 }

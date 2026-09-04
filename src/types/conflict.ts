@@ -3,7 +3,6 @@ export type ConflictSeverity = 'ERROR' | 'WARNING' | 'INFO'
 
 export type ConflictType =
   | 'INSUFFICIENT_STAFF'
-  | 'TOO_MANY_LEAVE_REQUEST'
   | 'SHIFT_QUOTA_MISMATCH'
   | 'INVALID_SHIFT_TRANSITION'
   | 'A6_NO_REST'

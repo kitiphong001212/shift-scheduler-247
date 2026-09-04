@@ -150,13 +150,6 @@ export function validateSchedule(input: ValidateInput): ValidationResult {
   }
 
   // ---------- Day level ----------
-  const requestsByDate = new Map<string, LeaveRequest[]>()
-  for (const r of input.leaveRequests) {
-    const list = requestsByDate.get(r.date) ?? []
-    list.push(r)
-    requestsByDate.set(r.date, list)
-  }
-
   const perDay: DayStat[] = []
   for (const day of month.days) {
     const byShift = { A1: 0, A7: 0, A5: 0, A6: 0 } as Record<ShiftCode, number>
@@ -197,17 +190,6 @@ export function validateSchedule(input: ValidateInput): ValidationResult {
         date: day.date,
         message: `Overstaffed: ${working}/${config.requiredWorking} working`,
         meta: { working, required: config.requiredWorking }
-      })
-    }
-
-    const requested = requestsByDate.get(day.date)?.length ?? 0
-    if (requested > maxLeaveCapacity) {
-      push({
-        type: 'TOO_MANY_LEAVE_REQUEST', severity: 'WARNING',
-        rule: `Daily leave quota = ${maxLeaveCapacity}`,
-        date: day.date,
-        message: `Leave request exceeds daily quota by ${requested - maxLeaveCapacity}`,
-        meta: { required: maxLeaveCapacity, requested, excess: requested - maxLeaveCapacity }
       })
     }
 

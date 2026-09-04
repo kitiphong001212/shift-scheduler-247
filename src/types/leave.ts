@@ -1,4 +1,3 @@
-// src/types/leave.ts
 export type LeaveType = 'OFF' | 'AL'
 
 export interface LeaveRequest {
@@ -7,4 +6,5 @@ export interface LeaveRequest {
   date: string      // YYYY-MM-DD
   type: LeaveType
   note?: string
+  requestedAt?: string  // ISO timestamp — earlier requests win OFF quota
 }
