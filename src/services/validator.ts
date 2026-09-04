@@ -6,7 +6,7 @@ import type {
   ScheduleStatistics, SchedulerConfig, ShiftAssignmentMap
 } from '@/types/schedule'
 import type { Conflict } from '@/types/conflict'
-import { SHIFT_CODES, isShift, transitionViolation } from './shiftRules'
+import { SHIFT_CODES, MAX_CONSECUTIVE_WORKING_DAYS, isShift, transitionViolation } from './shiftRules'
 import { cellKey } from '@/utils/date'
 
 export interface ValidateInput {
@@ -69,13 +69,13 @@ export function validateSchedule(input: ValidateInput): ValidationResult {
         working++
         streak++
         maxStreak = Math.max(maxStreak, streak)
-        if (streak > 5) {
+        if (streak > MAX_CONSECUTIVE_WORKING_DAYS) {
           push({
             type: 'TOO_MANY_CONSECUTIVE_WORKING_DAYS', severity: 'ERROR',
-            rule: 'Max 5 consecutive working days',
+            rule: `Max ${MAX_CONSECUTIVE_WORKING_DAYS} consecutive working days`,
             date: day.date, employeeId: emp.id,
-            message: `${emp.name}: working ${streak} consecutive days`,
-            meta: { streak }
+            message: `${emp.name}: working ${streak} consecutive days (max ${MAX_CONSECUTIVE_WORKING_DAYS})`,
+            meta: { streak, max: MAX_CONSECUTIVE_WORKING_DAYS }
           })
           bump(emp.id)
         }

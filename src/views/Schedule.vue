@@ -9,7 +9,7 @@ import { useEmployeeStore } from '@/stores/employeeStore'
 import { useScheduleStore } from '@/stores/scheduleStore'
 import { useSettingsStore } from '@/stores/settingsStore'
 import { useLeaveStore } from '@/stores/leaveStore'
-import { ALL_STATUSES, SHIFT_CODES, STATUS_STYLES } from '@/services/shiftRules'
+import { ALL_STATUSES, SHIFT_CODES, STATUS_STYLES, MAX_CONSECUTIVE_WORKING_DAYS } from '@/services/shiftRules'
 import { cellKey } from '@/utils/date'
 import type { CellStatus } from '@/types/employee'
 
@@ -112,7 +112,7 @@ const editingConflicts = computed(() =>
             </td>
             <td class="td">{{ s.al }}</td>
             <td class="td">{{ s.totalLeave }}</td>
-            <td class="td" :class="s.maxConsecutive > 5 ? 'text-rose-600 font-semibold' : ''">{{ s.maxConsecutive }}</td>
+            <td class="td" :class="s.maxConsecutive > MAX_CONSECUTIVE_WORKING_DAYS ? 'text-rose-600 font-semibold' : s.maxConsecutive === MAX_CONSECUTIVE_WORKING_DAYS ? 'text-amber-600 font-semibold' : ''">{{ s.maxConsecutive }}</td>
             <td class="td">{{ s.conflicts }}</td>
           </tr>
         </tbody>

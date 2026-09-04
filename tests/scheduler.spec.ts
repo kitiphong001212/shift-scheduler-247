@@ -96,6 +96,22 @@ describe('generateSchedule', () => {
   it('never schedules more than 5 consecutive working days', () => {
     const r = generateSchedule({ employees, month, shiftAssignments: assignments, leaveRequests: [], config })
     for (const s of r.statistics.perEmployee) expect(s.maxConsecutive).toBeLessThanOrEqual(5)
+    expect(r.conflicts.filter((c) => c.type === 'TOO_MANY_CONSECUTIVE_WORKING_DAYS').length).toBe(0)
+  })
+
+  it('forces OFF on the 6th day after 5 consecutive working days', () => {
+    const lockedEntries = [
+      '2026-09-01', '2026-09-02', '2026-09-03', '2026-09-04', '2026-09-05'
+    ].map((date) => ({
+      employeeId: 'EMP001', date, shift: 'A1' as const, source: 'MANUAL' as const
+    }))
+    const r = generateSchedule({
+      employees, month, shiftAssignments: assignments, leaveRequests: [], config, lockedEntries
+    })
+    const day6 = r.schedule.find((e) => e.employeeId === 'EMP001' && e.date === '2026-09-06')
+    expect(day6?.shift).toBe('OFF')
+    expect(day6?.source).toBe('AUTO')
+    expect(r.conflicts.filter((c) => c.type === 'TOO_MANY_CONSECUTIVE_WORKING_DAYS' && c.employeeId === 'EMP001').length).toBe(0)
   })
 
   it('distributes OFF fairly (max-min spread <= 2)', () => {
@@ -121,11 +137,12 @@ describe('generateSchedule', () => {
     expect(r.schedule.length).toBe(12 * m.days.length)
   })
 
-  it('entitlement-first caps OFF at the target', () => {
+  it('entitlement-first caps OFF at the target except mandatory consecutive rests', () => {
     const r = generateSchedule({
       employees, month, shiftAssignments: assignments, leaveRequests: [],
       config: { ...config, offPolicy: 'ENTITLEMENT_FIRST' }
     })
-    for (const s of r.statistics.perEmployee) expect(s.off).toBeLessThanOrEqual(month.offTarget)
+    expect(r.conflicts.filter((c) => c.type === 'TOO_MANY_CONSECUTIVE_WORKING_DAYS').length).toBe(0)
+    for (const s of r.statistics.perEmployee) expect(s.maxConsecutive).toBeLessThanOrEqual(5)
   })
 })

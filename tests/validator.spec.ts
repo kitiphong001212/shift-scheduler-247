@@ -2,7 +2,7 @@
 import { describe, expect, it } from 'vitest'
 import { buildMonthContext } from '@/services/calendar'
 import { validateSchedule } from '@/services/validator'
-import { DEFAULT_QUOTAS } from '@/services/shiftRules'
+import { DEFAULT_QUOTAS, MAX_CONSECUTIVE_WORKING_DAYS } from '@/services/shiftRules'
 import type { ScheduleEntry, SchedulerConfig } from '@/types/schedule'
 import type { Employee } from '@/types/employee'
 
@@ -56,6 +56,7 @@ describe('validateSchedule', () => {
     })
     const c = r.conflicts.find((x) => x.type === 'TOO_MANY_CONSECUTIVE_WORKING_DAYS')
     expect(c?.date).toBe('2026-09-06')
+    expect(c?.rule).toContain(String(MAX_CONSECUTIVE_WORKING_DAYS))
   })
 
   it('detects duplicate leave requests', () => {

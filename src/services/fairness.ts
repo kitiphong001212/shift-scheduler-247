@@ -1,6 +1,7 @@
 // src/services/fairness.ts
 import type { Employee, ShiftCode, CellStatus } from '@/types/employee'
 import type { OffPolicy } from '@/types/schedule'
+import { MAX_CONSECUTIVE_WORKING_DAYS } from './shiftRules'
 
 export interface EmployeeState {
   offCount: number
@@ -30,8 +31,10 @@ export function scoreForOff(employee: Employee, ctx: OffPickContext): number {
   const urgency = remainingOff / Math.max(1, ctx.daysRemaining)
   let score = remainingOff * 40 + urgency * 80
 
-  if (st.workStreak >= 5) score += 500
-  else if (st.workStreak === 4) score += 80
+  // Prefer people approaching the hard consecutive-work limit
+  if (st.workStreak >= MAX_CONSECUTIVE_WORKING_DAYS) score += 10_000
+  else if (st.workStreak === MAX_CONSECUTIVE_WORKING_DAYS - 1) score += 500
+  else if (st.workStreak === MAX_CONSECUTIVE_WORKING_DAYS - 2) score += 80
 
   if (st.lastStatus === 'A6') score += 80
 
@@ -40,7 +43,9 @@ export function scoreForOff(employee: Employee, ctx: OffPickContext): number {
   const shift = ctx.assignedShift.get(employee.id)
   if (shift && ctx.availableByShift[shift] - 1 < ctx.quotas[shift]) score -= 200
 
-  if (remainingOff <= 0) score -= ctx.offPolicy === 'ENTITLEMENT_FIRST' ? 10_000 : 150
+  if (remainingOff <= 0 && st.workStreak < MAX_CONSECUTIVE_WORKING_DAYS) {
+    score -= ctx.offPolicy === 'ENTITLEMENT_FIRST' ? 10_000 : 150
+  }
 
   score += ctx.rng() * 5
   return score
@@ -62,7 +67,8 @@ export function pickOffCandidates(
     for (let j = 0; j < pool.length; j++) {
       const st = ctx.states.get(pool[j].id)
       if (!st) continue
-      if (ctx.offPolicy === 'ENTITLEMENT_FIRST' && st.offCount >= ctx.offTarget) continue
+      const atLimit = st.workStreak >= MAX_CONSECUTIVE_WORKING_DAYS
+      if (ctx.offPolicy === 'ENTITLEMENT_FIRST' && st.offCount >= ctx.offTarget && !atLimit) continue
       const s = scoreForOff(pool[j], ctx)
       if (s > bestScore) { bestScore = s; bestIdx = j }
     }
