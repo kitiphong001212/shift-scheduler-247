@@ -115,14 +115,18 @@ export function validateSchedule(input: ValidateInput): ValidationResult {
     }
 
     if (off < month.offTarget) {
+      const coveredByAl = off + al >= month.offTarget
       push({
-        type: 'OFF_TARGET_NOT_REACHED', severity: 'WARNING',
+        type: 'OFF_TARGET_NOT_REACHED',
+        severity: coveredByAl ? 'INFO' : 'WARNING',
         rule: `OFF target = weekend days of the month (${month.offTarget})`,
         employeeId: emp.id,
-        message: `${emp.name}: OFF ${off}/${month.offTarget} (short by ${month.offTarget - off})`,
-        meta: { actual: off, target: month.offTarget }
+        message: coveredByAl
+          ? `${emp.name}: OFF ${off}/${month.offTarget}, covered by AL (total leave ${off + al})`
+          : `${emp.name}: OFF ${off}/${month.offTarget} (short by ${month.offTarget - off})`,
+        meta: { actual: off, target: month.offTarget, al, totalLeave: off + al }
       })
-      bump(emp.id)
+      if (!coveredByAl) bump(emp.id)
     } else if (off > month.offTarget) {
       push({
         type: 'OFF_TARGET_NOT_REACHED', severity: 'INFO',
