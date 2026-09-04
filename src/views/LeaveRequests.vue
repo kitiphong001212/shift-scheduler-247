@@ -4,12 +4,7 @@ import { computed, reactive, ref } from 'vue'
 import { useLeaveStore } from '@/stores/leaveStore'
 import { useEmployeeStore } from '@/stores/employeeStore'
 import { useScheduleStore } from '@/stores/scheduleStore'
-
-import { useSettingsStore } from '@/stores/settingsStore'
-import { WEEKDAY_LABELS } from '@/utils/date'
-
 import { WEEKDAY_LABELS, cellKey } from '@/utils/date'
- 2c94369 (Update shift scheduler)
 import type { LeaveType } from '@/types/leave'
 import ConflictBadge from '@/components/ConflictBadge.vue'
 
@@ -17,11 +12,7 @@ const leaveStore = useLeaveStore()
 const employeeStore = useEmployeeStore()
 const schedule = useScheduleStore()
 
- HEAD
-const filter = ref<'ALL' | 'OFF' | 'AL' | 'CONFLICT'>('ALL')
-
 const filter = ref<'ALL' | 'OFF' | 'AL' | 'DENIED'>('ALL')
- 2c94369 (Update shift scheduler)
 const form = reactive<{ employeeId: string; type: LeaveType; note: string }>({
   employeeId: employeeStore.activeEmployees[0]?.id ?? '',
   type: 'AL',
