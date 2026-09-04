@@ -2,8 +2,8 @@
 import type { CellStatus, Employee, ShiftCode } from '@/types/employee'
 import type { GenerateInput, GenerateResult, ScheduleEntry, AssignmentSource } from '@/types/schedule'
 import type { LeaveRequest } from '@/types/leave'
-import { SHIFT_CODES, MAX_CONSECUTIVE_WORKING_DAYS, LAST_RESORT_COVER_FOR, isTransitionAllowed, canWorkShift } from './shiftRules'
-import { pickOffCandidates, type EmployeeState, type OffPickContext } from './fairness'
+import { SHIFT_CODES, MAX_CONSECUTIVE_WORKING_DAYS, LAST_RESORT_COVER_FOR, isTransitionAllowed, canWorkShift, isShift } from './shiftRules'
+import { pickOffCandidates, pickAlCandidates, type EmployeeState, type OffPickContext } from './fairness'
 import { cellKey, mulberry32 } from '@/utils/date'
 import { validateSchedule } from './validator'
 
@@ -23,15 +23,14 @@ export function compareOffRequestOrder(a: LeaveRequest, b: LeaveRequest): number
  * Generate-first, report-later.
  * This function NEVER throws and NEVER aborts on conflicts.
  *
- * OFF assignment:
- * 1. AL is locked and reduces the day's OFF quota.
- * 2. Anyone already at Max Consec. working days is forced OFF (hard rule).
- * 3. OFF requests are granted first-come (requestedAt) up to remaining quota.
- *    Late requests past quota must work that day (not eligible for AUTO OFF),
- *    unless they hit the consecutive-work hard rule above.
- * 4. Leftover quota is filled with Fair Random among people who did not request OFF,
- *    preferring staff still under the weekend OFF target. People who already hit the
- *    target (or have upcoming AL) are only used if staffing still needs more OFF.
+ * Leave / OFF assignment:
+ * 1. AL requests are locked and consume daily leave capacity.
+ * 2. Max consecutive working days → forced rest (OFF if under weekend target, else AL).
+ * 3. OFF requests FCFS: granted as OFF while under weekend target, else as AL.
+ *    Late requests past daily capacity must work.
+ * 4. Leftover daily leave slots: Fair Random OFF for staff still under weekend target,
+ *    then Fair Random AL for staffing extras (Pattarapong: target 8 OFF + ~2 AL).
+ * 5. Post-pass: convert excess OFF above weekend target → AL; top up shortfall with OFF/AL.
  */
 export function generateSchedule(input: GenerateInput): GenerateResult {
   const { month, config, shiftAssignments } = input
@@ -82,18 +81,18 @@ export function generateSchedule(input: GenerateInput): GenerateResult {
     }
 
     // Hard rule: after MAX consecutive working days, must rest today.
+    // Prefer OFF while under weekend target; otherwise forced AL.
     for (const emp of employees) {
       if (leaveToday.has(emp.id) || shiftLocked.has(emp.id)) continue
-      const streak = states.get(emp.id)?.workStreak ?? 0
-      if (streak >= MAX_CONSECUTIVE_WORKING_DAYS) {
-        leaveToday.set(emp.id, { status: 'OFF', source: 'AUTO' })
+      const st = states.get(emp.id)!
+      if (st.workStreak >= MAX_CONSECUTIVE_WORKING_DAYS) {
+        const status = st.offCount < month.offTarget ? 'OFF' : 'AL'
+        leaveToday.set(emp.id, { status, source: 'AUTO' })
       }
     }
 
-    const alCount = [...leaveToday.values()].filter((v) => v.status === 'AL').length
-    const offQuota = dailyOffQuota(N, config.requiredWorking, alCount)
-    const alreadyOff = [...leaveToday.values()].filter((v) => v.status === 'OFF').length
-    let remaining = Math.max(0, offQuota - alreadyOff)
+    const leaveCapacity = Math.max(0, N - config.requiredWorking)
+    let remainingLeave = Math.max(0, leaveCapacity - leaveToday.size)
 
     const offReqs = requests
       .filter((r) => r.date === day.date && r.type === 'OFF')
@@ -101,15 +100,18 @@ export function generateSchedule(input: GenerateInput): GenerateResult {
       .sort(compareOffRequestOrder)
 
     for (const r of offReqs) {
-      if (remaining > 0) {
-        leaveToday.set(r.employeeId, { status: 'OFF', source: 'REQUEST' })
-        remaining -= 1
-      } else {
+      if (remainingLeave <= 0) {
         mustWork.add(r.employeeId)
+        continue
       }
+      const st = states.get(r.employeeId)!
+      // Weekend OFF entitlement first; extra requested leave days become AL
+      const status = st.offCount < month.offTarget ? 'OFF' : 'AL'
+      leaveToday.set(r.employeeId, { status, source: 'REQUEST' })
+      remainingLeave -= 1
     }
 
-    if (remaining > 0) {
+    if (remainingLeave > 0) {
       const availableByShift = SHIFT_CODES.reduce((acc, s) => {
         acc[s] = 0
         return acc
@@ -148,9 +150,18 @@ export function generateSchedule(input: GenerateInput): GenerateResult {
         rng
       }
 
-      pickOffCandidates(candidates, remaining, ctx).forEach((e) =>
-        leaveToday.set(e.id, { status: 'OFF', source: 'AUTO' })
-      )
+      // OFF only for people still under weekend target
+      const offPicks = pickOffCandidates(candidates, remainingLeave, ctx)
+      offPicks.forEach((e) => leaveToday.set(e.id, { status: 'OFF', source: 'AUTO' }))
+      remainingLeave -= offPicks.length
+
+      // Staffing extras beyond weekend OFF target → AL (not more OFF)
+      if (remainingLeave > 0) {
+        const alPool = candidates.filter((e) => !leaveToday.has(e.id))
+        pickAlCandidates(alPool, remainingLeave, ctx).forEach((e) =>
+          leaveToday.set(e.id, { status: 'AL', source: 'AUTO' })
+        )
+      }
     }
 
     const working = employees.filter((e) => !leaveToday.has(e.id))
@@ -195,6 +206,8 @@ export function generateSchedule(input: GenerateInput): GenerateResult {
     }
   })
 
+  applyLeaveTargetNormalization(schedule, employees, month.offTarget, config.requiredWorking)
+
   const validation = validateSchedule({
     employees: input.employees,
     month,
@@ -205,6 +218,94 @@ export function generateSchedule(input: GenerateInput): GenerateResult {
   })
 
   return { schedule, conflicts: validation.conflicts, statistics: validation.statistics }
+}
+
+/**
+ * Normalize personal leave to weekend OFF target:
+ * - Excess OFF above target → convert to AL (Pattarapong: 10 OFF → 8 OFF + 2 AL)
+ * - Shortfall: top up OFF from spare staffing, then force AL
+ */
+export function applyLeaveTargetNormalization(
+  schedule: ScheduleEntry[],
+  employees: Employee[],
+  offTarget: number,
+  requiredWorking: number
+): void {
+  const byDate = new Map<string, ScheduleEntry[]>()
+  const byEmp = new Map<string, ScheduleEntry[]>()
+  for (const e of schedule) {
+    ;(byDate.get(e.date) ?? byDate.set(e.date, []).get(e.date)!).push(e)
+    ;(byEmp.get(e.employeeId) ?? byEmp.set(e.employeeId, []).get(e.employeeId)!).push(e)
+  }
+
+  const workingCount = (date: string) =>
+    (byDate.get(date) ?? []).filter((e) => isShift(e.shift)).length
+
+  const offCells = (employeeId: string) =>
+    (byEmp.get(employeeId) ?? []).filter((e) => e.shift === 'OFF')
+
+  // Pass A: excess OFF → AL
+  for (const emp of employees) {
+    const offs = offCells(emp.id).slice().sort((a, b) => {
+      // Prefer converting AUTO, then REQUEST, keep MANUAL OFF if possible
+      const rank = (s: AssignmentSource) => (s === 'AUTO' ? 0 : s === 'REQUEST' ? 1 : 2)
+      if (rank(a.source) !== rank(b.source)) return rank(a.source) - rank(b.source)
+      return b.date.localeCompare(a.date)
+    })
+    let excess = offs.length - offTarget
+    for (const cell of offs) {
+      if (excess <= 0) break
+      cell.shift = 'AL'
+      if (cell.source === 'MANUAL') cell.source = 'AUTO'
+      excess--
+    }
+  }
+
+  // Pass B: shortfall — top up OFF from spare days
+  for (const emp of employees) {
+    let need = offTarget - offCells(emp.id).length
+    if (need <= 0) continue
+    const cells = (byEmp.get(emp.id) ?? [])
+      .filter((c) => isShift(c.shift) && c.source !== 'MANUAL')
+      .slice()
+      .sort((a, b) => {
+        const spareA = workingCount(a.date) - requiredWorking
+        const spareB = workingCount(b.date) - requiredWorking
+        if (spareA !== spareB) return spareB - spareA
+        return b.date.localeCompare(a.date)
+      })
+    for (const cell of cells) {
+      if (need <= 0) break
+      if (workingCount(cell.date) <= requiredWorking) continue
+      cell.shift = 'OFF'
+      cell.source = 'AUTO'
+      need--
+    }
+  }
+
+  // Pass C: remaining shortfall → forced AL
+  for (const emp of employees) {
+    let need = offTarget - offCells(emp.id).length
+    if (need <= 0) continue
+    const cells = (byEmp.get(emp.id) ?? [])
+      .filter((c) => isShift(c.shift))
+      .slice()
+      .sort((a, b) => {
+        const manA = a.source === 'MANUAL' ? 1 : 0
+        const manB = b.source === 'MANUAL' ? 1 : 0
+        if (manA !== manB) return manA - manB
+        const spareA = workingCount(a.date) - requiredWorking
+        const spareB = workingCount(b.date) - requiredWorking
+        if (spareA !== spareB) return spareB - spareA
+        return b.date.localeCompare(a.date)
+      })
+    for (const cell of cells) {
+      if (need <= 0) break
+      cell.shift = 'AL'
+      cell.source = 'AUTO'
+      need--
+    }
+  }
 }
 
 function legalShiftFor(prev: CellStatus | null, preferred: ShiftCode, home: ShiftCode): ShiftCode {

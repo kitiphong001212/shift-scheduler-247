@@ -138,32 +138,60 @@ function pickFromPool(
 }
 
 /**
- * Fill leftover daily OFF slots in tiers:
- * 1) still under weekend OFF target
- * 2) at/over target but no remaining AL (staffing extras)
- * 3) everyone else (last resort)
+ * Fill leftover daily OFF slots — only staff still under the weekend OFF target.
+ * Staffing extras beyond the target are filled as AL via pickAlCandidates.
  */
 export function pickOffCandidates(
   candidates: Employee[],
   need: number,
   ctx: OffPickContext
 ): Employee[] {
-  const tiers: SoftTier[] =
-    ctx.offPolicy === 'ENTITLEMENT_FIRST'
-      ? ['under-target']
-      : ['under-target', 'no-al-extra', 'any']
+  return pickFromPool(candidates, need, ctx, 'under-target')
+}
 
+/** Score for AUTO AL staffing extras (beyond weekend OFF target). */
+export function scoreForAl(employee: Employee, ctx: OffPickContext): number {
+  const st = ctx.states.get(employee.id)
+  if (!st) return -Infinity
+
+  const plannedAl = plannedAlOf(employee.id, ctx)
+  const leaveLoad = projectedLeave(st, plannedAl)
+  let score = 100 - leaveLoad * 50
+
+  if (needsHardRest(st)) score += 10_000
+  if (st.lastStatus === 'OFF' || st.lastStatus === 'AL') score -= 80
+
+  const shift = ctx.assignedShift.get(employee.id)
+  if (shift && ctx.availableByShift[shift] - 1 < ctx.quotas[shift]) score -= 200
+
+  score += ctx.rng() * 5
+  return score
+}
+
+/** Fill remaining daily leave capacity with AL after OFF target slots are used. */
+export function pickAlCandidates(
+  candidates: Employee[],
+  need: number,
+  ctx: OffPickContext
+): Employee[] {
+  const pool = [...candidates]
   const chosen: Employee[] = []
-  let remaining = need
-  let pool = [...candidates]
 
-  for (const tier of tiers) {
-    if (remaining <= 0) break
-    const batch = pickFromPool(pool, remaining, ctx, tier)
-    chosen.push(...batch)
-    const taken = new Set(batch.map((e) => e.id))
-    pool = pool.filter((e) => !taken.has(e.id))
-    remaining = need - chosen.length
+  for (let i = 0; i < need && pool.length > 0; i++) {
+    let bestIdx = -1
+    let bestScore = -Infinity
+    for (let j = 0; j < pool.length; j++) {
+      const st = ctx.states.get(pool[j].id)
+      if (!st) continue
+      // Prefer people already at OFF target for AL extras; still allow others if needed
+      const s = scoreForAl(pool[j], ctx) + (st.offCount >= ctx.offTarget ? 200 : 0)
+      if (s > bestScore) { bestScore = s; bestIdx = j }
+    }
+    if (bestIdx < 0) break
+    const picked = pool.splice(bestIdx, 1)[0]
+    chosen.push(picked)
+    const shift = ctx.assignedShift.get(picked.id)
+    if (shift) ctx.availableByShift[shift] -= 1
   }
   return chosen
 }

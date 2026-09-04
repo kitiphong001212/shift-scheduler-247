@@ -1,7 +1,7 @@
 // tests/scheduler.spec.ts
 import { describe, expect, it } from 'vitest'
 import { buildMonthContext } from '@/services/calendar'
-import { generateSchedule } from '@/services/scheduler'
+import { generateSchedule, applyLeaveTargetNormalization } from '@/services/scheduler'
 import { createSeedEmployees } from '@/stores/employeeStore'
 import { DEFAULT_QUOTAS } from '@/services/shiftRules'
 import type { SchedulerConfig, ShiftAssignmentMap } from '@/types/schedule'
@@ -207,4 +207,50 @@ describe('generateSchedule', () => {
     }
     expect(r.conflicts.filter((c) => c.type === 'FORBIDDEN_SHIFT_FOR_GROUP').length).toBe(0)
   })
+
+
+  it('caps OFF at weekend target and turns extras into AL (Pattarapong rule)', () => {
+    // Request 10 OFF days for EMP004 — only 8 should stay OFF, 2 become AL
+    const dates = month.days.slice(0, 10).map((d) => d.date)
+    const leaveRequests = dates.map((date, i) => ({
+      id: `off-${i}`,
+      employeeId: 'EMP004',
+      date,
+      type: 'OFF' as const,
+      requestedAt: new Date(Date.UTC(2026, 8, 1, 0, i)).toISOString()
+    }))
+    const r = generateSchedule({ employees, month, shiftAssignments: assignments, leaveRequests, config })
+    const s = r.statistics.perEmployee.find((x) => x.employeeId === 'EMP004')!
+    expect(s.off).toBeLessThanOrEqual(month.offTarget)
+    expect(s.off + s.al).toBeGreaterThanOrEqual(Math.min(10, month.offTarget + 2))
+    expect(s.al).toBeGreaterThanOrEqual(2)
+  })
+
+  it('applyLeaveTargetNormalization converts excess OFF into AL', () => {
+    const entries = month.days.map((d, i) => ({
+      employeeId: 'EMP004',
+      date: d.date,
+      shift: (i < 10 ? 'OFF' : 'A5') as import('@/types/employee').CellStatus,
+      source: 'AUTO' as const
+    }))
+    // Need other employees so workingCount math is defined
+    for (const e of employees) {
+      if (e.id === 'EMP004') continue
+      for (const d of month.days) {
+        entries.push({ employeeId: e.id, date: d.date, shift: e.defaultShift, source: 'AUTO' })
+      }
+    }
+    applyLeaveTargetNormalization(entries, employees, month.offTarget, config.requiredWorking)
+    const mine = entries.filter((e) => e.employeeId === 'EMP004')
+    expect(mine.filter((e) => e.shift === 'OFF').length).toBe(month.offTarget)
+    expect(mine.filter((e) => e.shift === 'AL').length).toBe(10 - month.offTarget)
+  })
+
+  it('never leaves AUTO OFF above the weekend target after generate', () => {
+    const r = generateSchedule({ employees, month, shiftAssignments: assignments, leaveRequests: [], config })
+    for (const s of r.statistics.perEmployee) {
+      expect(s.off).toBeLessThanOrEqual(month.offTarget)
+    }
+  })
 })
+
