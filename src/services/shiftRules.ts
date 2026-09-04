@@ -20,9 +20,9 @@ export const MAX_CONSECUTIVE_WORKING_DAYS = 5
 
 /** true = allowed on consecutive working days */
 export const TRANSITION_MATRIX: Record<ShiftCode, Record<ShiftCode, boolean>> = {
-  A1: { A1: true,  A7: true,  A5: false, A6: false },
+  A1: { A1: true,  A7: true,  A5: true,  A6: false },
   A7: { A1: true,  A7: true,  A5: true,  A6: false },
-  A5: { A1: false, A7: true,  A5: true,  A6: true  },
+  A5: { A1: false, A7: false, A5: true,  A6: true  },
   A6: { A1: false, A7: false, A5: true,  A6: true  }
 }
 
