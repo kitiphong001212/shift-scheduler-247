@@ -1,6 +1,6 @@
 // tests/shiftRules.spec.ts
 import { describe, expect, it } from 'vitest'
-import { isTransitionAllowed, transitionViolation, TRANSITION_MATRIX, SHIFT_CODES } from '@/services/shiftRules'
+import { isTransitionAllowed, transitionViolation, TRANSITION_MATRIX, SHIFT_CODES, LAST_RESORT_COVER_FOR } from '@/services/shiftRules'
 
 describe('shift transition rules', () => {
   it('matches the documented allow matrix', () => {
@@ -54,5 +54,11 @@ describe('shift transition rules', () => {
         }
       }
     }
+  })
+
+  it('documents A5 → A6 as allowed (including last-resort A6 cover)', () => {
+    expect(TRANSITION_MATRIX.A5.A6).toBe(true)
+    expect(LAST_RESORT_COVER_FOR.A6).toBe('A5')
+    expect(isTransitionAllowed('A5', 'A6')).toBe(true)
   })
 })

@@ -2,7 +2,7 @@
 import type { CellStatus, Employee, ShiftCode } from '@/types/employee'
 import type { GenerateInput, GenerateResult, ScheduleEntry, AssignmentSource } from '@/types/schedule'
 import type { LeaveRequest } from '@/types/leave'
-import { SHIFT_CODES, MAX_CONSECUTIVE_WORKING_DAYS, isTransitionAllowed } from './shiftRules'
+import { SHIFT_CODES, MAX_CONSECUTIVE_WORKING_DAYS, LAST_RESORT_COVER_FOR, isTransitionAllowed } from './shiftRules'
 import { pickOffCandidates, type EmployeeState, type OffPickContext } from './fairness'
 import { cellKey, mulberry32 } from '@/utils/date'
 import { validateSchedule } from './validator'
@@ -228,6 +228,20 @@ function balanceShifts(
     return c
   }
 
+  const pickMover = (from: ShiftCode, to: ShiftCode): Employee | null => {
+    const candidates = working.filter((e) => {
+      if (assign.get(e.id) !== from) return false
+      if (shiftLocked.has(e.id)) return false
+      const prev = states.get(e.id)?.lastStatus ?? null
+      return isTransitionAllowed(prev, to)
+    })
+    if (candidates.length === 0) return null
+    const minMoves = Math.min(...candidates.map((e) => states.get(e.id)!.shiftMoveCount))
+    const tied = candidates.filter((e) => states.get(e.id)!.shiftMoveCount === minMoves)
+    return tied[Math.floor(rng() * tied.length)] ?? null
+  }
+
+  // Phase 1: normal rebalance — only move from over-quota → under-quota
   for (let guard = 0; guard < 60; guard++) {
     const counts = tally()
     const over = SHIFT_CODES.filter((s) => counts[s] > quotas[s])
@@ -240,22 +254,33 @@ function balanceShifts(
     let moved = false
     outer: for (const from of over) {
       for (const to of under) {
-        const candidates = working.filter((e) => {
-          if (assign.get(e.id) !== from) return false
-          if (shiftLocked.has(e.id)) return false
-          const prev = states.get(e.id)?.lastStatus ?? null
-          return isTransitionAllowed(prev, to)
-        })
-        if (candidates.length === 0) continue
-
-        const minMoves = Math.min(...candidates.map((e) => states.get(e.id)!.shiftMoveCount))
-        const tied = candidates.filter((e) => states.get(e.id)!.shiftMoveCount === minMoves)
-        const picked = tied[Math.floor(rng() * tied.length)]
-
+        const picked = pickMover(from, to)
+        if (!picked) continue
         assign.set(picked.id, to)
         moved = true
         break outer
       }
+    }
+    if (!moved) break
+  }
+
+  // Phase 2 (last resort): if A6 is still short (e.g. many A6 on leave),
+  // pull A5 to cover even when A5 is not over quota.
+  for (let guard = 0; guard < 20; guard++) {
+    const counts = tally()
+    const short = SHIFT_CODES.filter((s) => counts[s] < quotas[s])
+    if (short.length === 0) break
+
+    let moved = false
+    for (const to of short) {
+      const from = LAST_RESORT_COVER_FOR[to]
+      if (!from) continue
+      if (counts[to] >= quotas[to]) continue
+      const picked = pickMover(from, to)
+      if (!picked) continue
+      assign.set(picked.id, to)
+      moved = true
+      break
     }
     if (!moved) break
   }

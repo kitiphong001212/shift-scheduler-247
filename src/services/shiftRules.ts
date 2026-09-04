@@ -22,8 +22,16 @@ export const MAX_CONSECUTIVE_WORKING_DAYS = 5
 export const TRANSITION_MATRIX: Record<ShiftCode, Record<ShiftCode, boolean>> = {
   A1: { A1: true,  A7: true,  A5: true,  A6: false },
   A7: { A1: true,  A7: true,  A5: true,  A6: false },
-  A5: { A1: false, A7: false, A5: true,  A6: true  },
+  A5: { A1: false, A7: false, A5: true,  A6: true  }, // A5 → A6 also used as last-resort cover
   A6: { A1: false, A7: false, A5: true,  A6: true  }
+}
+
+/**
+ * When A6 is short on working staff (e.g. many A6 leave requests),
+ * pull from this shift as a last resort even if it goes under its own quota.
+ */
+export const LAST_RESORT_COVER_FOR: Partial<Record<ShiftCode, ShiftCode>> = {
+  A6: 'A5'
 }
 
 /** A6 -> A5 requires at least 1 OFF/AL day in between. */
