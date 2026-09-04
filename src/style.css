@@ -1,0 +1,154 @@
+/* src/style.css
+ * 24/7 Support Shift Scheduler — global styles
+ * Tailwind CSS v3 · Desktop-first · Semantic colors only
+ * ---------------------------------------------------------------
+ * NOTE: This file REPLACES the Vite template default entirely.
+ */
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* =============================================================
+ * BASE
+ * ============================================================= */
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+    font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI',
+      Roboto, 'Helvetica Neue', Arial, 'Noto Sans Thai', sans-serif;
+  }
+
+  html,
+  body,
+  #app {
+    @apply h-full bg-slate-50 text-slate-800 antialiased;
+  }
+
+  body {
+    margin: 0;
+    min-height: 100vh;
+  }
+
+  /* Keep numeric columns aligned in the schedule grid */
+  table {
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Consistent focus ring for keyboard users */
+  :focus-visible {
+    @apply outline-none ring-2 ring-slate-900 ring-offset-1;
+  }
+}
+
+/* =============================================================
+ * COMPONENTS
+ * ============================================================= */
+@layer components {
+  /* ---- Buttons ---------------------------------------------- */
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-md px-3 py-2
+           text-sm font-medium transition-colors
+           disabled:cursor-not-allowed disabled:opacity-50;
+  }
+
+  .btn-primary {
+    @apply inline-flex items-center justify-center gap-2 rounded-md px-3 py-2
+           text-sm font-medium transition-colors
+           disabled:cursor-not-allowed disabled:opacity-50
+           bg-slate-900 text-white hover:bg-slate-700;
+  }
+
+  .btn-ghost {
+    @apply inline-flex items-center justify-center gap-2 rounded-md px-3 py-2
+           text-sm font-medium transition-colors
+           disabled:cursor-not-allowed disabled:opacity-50
+           border border-slate-300 bg-white text-slate-700 hover:bg-slate-50;
+  }
+
+  .btn-danger {
+    @apply inline-flex items-center justify-center gap-2 rounded-md px-3 py-2
+           text-sm font-medium transition-colors
+           disabled:cursor-not-allowed disabled:opacity-50
+           bg-rose-600 text-white hover:bg-rose-500;
+  }
+
+  /* ---- Surfaces --------------------------------------------- */
+  .card {
+    @apply rounded-lg border border-slate-200 bg-white p-4 shadow-sm;
+  }
+
+  /* ---- Forms ------------------------------------------------ */
+  .input {
+    @apply w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm
+           text-slate-800 transition-colors
+           focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500
+           disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400;
+  }
+
+  .label {
+    @apply mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500;
+  }
+
+  /* ---- Tables ----------------------------------------------- */
+  .th {
+    @apply border-b border-slate-200 px-3 py-2 text-left text-xs font-semibold
+           uppercase tracking-wide text-slate-500;
+  }
+
+  .td {
+    @apply border-b border-slate-100 px-3 py-2 text-sm text-slate-700;
+  }
+}
+
+/* =============================================================
+ * UTILITIES
+ * ============================================================= */
+@layer utilities {
+  /* Slimmer scrollbar for the horizontally-scrolling schedule grid */
+  .scrollbar-thin {
+    scrollbar-width: thin;
+    scrollbar-color: theme('colors.slate.300') transparent;
+  }
+  .scrollbar-thin::-webkit-scrollbar {
+    height: 8px;
+    width: 8px;
+  }
+  .scrollbar-thin::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    @apply rounded-full bg-slate-300;
+  }
+  .scrollbar-thin::-webkit-scrollbar-thumb:hover {
+    @apply bg-slate-400;
+  }
+}
+
+/* =============================================================
+ * PRINT — export the calendar to paper / PDF
+ * ============================================================= */
+@media print {
+  aside,
+  header button,
+  .no-print {
+    display: none !important;
+  }
+
+  body,
+  #app {
+    background: #fff !important;
+  }
+
+  .card {
+    border: 1px solid #cbd5e1 !important;
+    box-shadow: none !important;
+    break-inside: avoid;
+  }
+
+  /* Show the whole month instead of a scroll window */
+  .max-h-\[70vh\] {
+    max-height: none !important;
+    overflow: visible !important;
+  }
+}
