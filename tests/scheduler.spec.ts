@@ -176,4 +176,24 @@ describe('generateSchedule', () => {
     expect(r.conflicts.filter((c) => c.type === 'TOO_MANY_CONSECUTIVE_WORKING_DAYS').length).toBe(0)
     for (const s of r.statistics.perEmployee) expect(s.maxConsecutive).toBeLessThanOrEqual(5)
   })
+
+  it('uses A5 to cover A6 as a last resort when many A6 are on leave', () => {
+    const a6 = employees.filter((e) => e.defaultShift === 'A6')
+    expect(a6.length).toBeGreaterThanOrEqual(2)
+    const leaveRequests = a6.map((e, i) => ({
+      id: `a6-leave-${i}`,
+      employeeId: e.id,
+      date: '2026-09-10',
+      type: 'OFF' as const,
+      requestedAt: new Date(Date.UTC(2026, 8, 1, 7, i)).toISOString()
+    }))
+    const r = generateSchedule({ employees, month, shiftAssignments: assignments, leaveRequests, config })
+    const onDay = r.schedule.filter((e) => e.date === '2026-09-10')
+    for (const e of a6) {
+      expect(onDay.find((c) => c.employeeId === e.id)?.shift).toBe('OFF')
+    }
+    const a6Working = onDay.filter((c) => c.shift === 'A6')
+    expect(a6Working.length).toBe(config.quotas.A6)
+    expect(a6Working.some((c) => assignments[c.employeeId] === 'A5')).toBe(true)
+  })
 })
