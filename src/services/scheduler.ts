@@ -2,7 +2,7 @@
 import type { CellStatus, Employee, ShiftCode } from '@/types/employee'
 import type { GenerateInput, GenerateResult, ScheduleEntry, AssignmentSource } from '@/types/schedule'
 import type { LeaveRequest } from '@/types/leave'
-import { SHIFT_CODES, isTransitionAllowed } from './shiftRules'
+import { SHIFT_CODES, MAX_CONSECUTIVE_WORKING_DAYS, isTransitionAllowed } from './shiftRules'
 import { pickOffCandidates, type EmployeeState, type OffPickContext } from './fairness'
 import { cellKey, mulberry32 } from '@/utils/date'
 import { validateSchedule } from './validator'
@@ -25,9 +25,11 @@ export function compareOffRequestOrder(a: LeaveRequest, b: LeaveRequest): number
  *
  * OFF assignment:
  * 1. AL is locked and reduces the day's OFF quota.
- * 2. OFF requests are granted first-come (requestedAt) up to remaining quota.
- *    Late requests past quota must work that day (not eligible for AUTO OFF).
- * 3. Leftover quota is filled with Fair Random among people who did not request OFF.
+ * 2. Anyone already at Max Consec. working days is forced OFF (hard rule).
+ * 3. OFF requests are granted first-come (requestedAt) up to remaining quota.
+ *    Late requests past quota must work that day (not eligible for AUTO OFF),
+ *    unless they hit the consecutive-work hard rule above.
+ * 4. Leftover quota is filled with Fair Random among people who did not request OFF.
  */
 export function generateSchedule(input: GenerateInput): GenerateResult {
   const { month, config, shiftAssignments } = input
@@ -75,6 +77,15 @@ export function generateSchedule(input: GenerateInput): GenerateResult {
       if (r.date !== day.date || r.type !== 'AL') continue
       if (leaveToday.has(r.employeeId) || shiftLocked.has(r.employeeId)) continue
       leaveToday.set(r.employeeId, { status: 'AL', source: 'REQUEST' })
+    }
+
+    // Hard rule: after MAX consecutive working days, must rest today.
+    for (const emp of employees) {
+      if (leaveToday.has(emp.id) || shiftLocked.has(emp.id)) continue
+      const streak = states.get(emp.id)?.workStreak ?? 0
+      if (streak >= MAX_CONSECUTIVE_WORKING_DAYS) {
+        leaveToday.set(emp.id, { status: 'OFF', source: 'AUTO' })
+      }
     }
 
     const alCount = [...leaveToday.values()].filter((v) => v.status === 'AL').length

@@ -15,6 +15,9 @@ export const SHIFTS: Record<ShiftCode, ShiftDefinition> = {
 export const DEFAULT_QUOTAS: Record<ShiftCode, number> = { A1: 3, A7: 2, A5: 3, A6: 2 }
 export const DEFAULT_REQUIRED_WORKING = 10
 
+/** Hard limit: working days in a row must not exceed this. */
+export const MAX_CONSECUTIVE_WORKING_DAYS = 5
+
 /** true = allowed on consecutive working days */
 export const TRANSITION_MATRIX: Record<ShiftCode, Record<ShiftCode, boolean>> = {
   A1: { A1: true,  A7: true,  A5: false, A6: false },
