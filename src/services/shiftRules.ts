@@ -43,6 +43,12 @@ export const LAST_RESORT_COVER_FOR: Partial<Record<ShiftCode, ShiftCode>> = {
 export const MAX_CONSECUTIVE_A6_COVER = 2
 
 /**
+ * Max consecutive days parked on a shift that cannot transition back to home
+ * (e.g. A1 on A5). Force rest so they can return home and protect daily quotas.
+ */
+export const MAX_TRAPPED_CROSS_COVER = 2
+
+/**
  * Shifts each monthly home group may work (even after OFF resets day-to-day transitions).
  * A5 never works A1/A7; A1/A7 never work A6; A6 stays on overnight family (A6/A5).
  */

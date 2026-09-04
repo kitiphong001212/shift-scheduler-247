@@ -1,7 +1,7 @@
 // src/services/fairness.ts
 import type { Employee, ShiftCode, CellStatus } from '@/types/employee'
 import type { OffPolicy } from '@/types/schedule'
-import { MAX_CONSECUTIVE_WORKING_DAYS, MAX_CONSECUTIVE_A6_COVER } from './shiftRules'
+import { MAX_CONSECUTIVE_WORKING_DAYS, MAX_CONSECUTIVE_A6_COVER, MAX_TRAPPED_CROSS_COVER, isTransitionAllowed, isShift } from './shiftRules'
 
 export interface EmployeeState {
   offCount: number
@@ -13,6 +13,11 @@ export interface EmployeeState {
   a6CoverStreak: number
   /** Total A6 cover days this month for A5-home staff. */
   a6CoverDays: number
+  /**
+   * Consecutive days on a shift that cannot transition back to home
+   * (e.g. A1 parked on A5). Must rest to return home for quota.
+   */
+  trappedStreak: number
 }
 
 export interface OffPickContext {
@@ -31,7 +36,11 @@ export interface OffPickContext {
 }
 
 function needsHardRest(st: EmployeeState): boolean {
-  return st.workStreak >= MAX_CONSECUTIVE_WORKING_DAYS
+  return (
+    st.workStreak >= MAX_CONSECUTIVE_WORKING_DAYS ||
+    st.a6CoverStreak >= MAX_CONSECUTIVE_A6_COVER ||
+    st.trappedStreak >= MAX_TRAPPED_CROSS_COVER
+  )
 }
 
 function plannedAlOf(employeeId: string, ctx: OffPickContext): number {
@@ -87,8 +96,16 @@ export function scoreForOff(employee: Employee, ctx: OffPickContext): number {
   // Avoid OFF/AL clustering
   if (st.lastStatus === 'OFF' || st.lastStatus === 'AL') score -= 80
 
+  // Protect daily shift quotas — do not OFF someone if their home group would go short
   const shift = ctx.assignedShift.get(employee.id)
-  if (shift && ctx.availableByShift[shift] - 1 < ctx.quotas[shift]) score -= 200
+  if (shift && ctx.availableByShift[shift] - 1 < ctx.quotas[shift]) score -= 2_500
+
+  // Prefer rest for staff stuck off-home who cannot transition back (e.g. A1 parked on A5)
+  if (shift && st.lastStatus && isShift(st.lastStatus) && st.lastStatus !== shift) {
+    if (!isTransitionAllowed(st.lastStatus, shift)) {
+      score += 1_500 + st.trappedStreak * 800
+    }
+  }
 
   if (remainingOff <= 0 && !needsHardRest(st)) {
     score -= 8_000 + Math.max(0, -remainingOff) * 400
@@ -133,6 +150,13 @@ function pickFromPool(
       const hard = needsHardRest(st)
       if (ctx.offPolicy === 'ENTITLEMENT_FIRST' && st.offCount >= ctx.offTarget && !hard) continue
       if (!inTier(st, local[j].id, ctx, tier)) continue
+      // Never soft-OFF a home group below daily quota (hard rest / trapped escape still allowed)
+      const shift = ctx.assignedShift.get(local[j].id)
+      if (
+        !hard &&
+        shift &&
+        ctx.availableByShift[shift] - 1 < ctx.quotas[shift]
+      ) continue
       // Last-resort tier: still prefer not to push AL holders past weekend OFF target
       if (tier === 'any' && plannedAlOf(local[j].id, ctx) > 0 && st.offCount >= ctx.offTarget && !hard) continue
       const s = scoreForOff(local[j], ctx)
@@ -173,7 +197,7 @@ export function scoreForAl(employee: Employee, ctx: OffPickContext): number {
   if (st.lastStatus === 'OFF' || st.lastStatus === 'AL') score -= 80
 
   const shift = ctx.assignedShift.get(employee.id)
-  if (shift && ctx.availableByShift[shift] - 1 < ctx.quotas[shift]) score -= 200
+  if (shift && ctx.availableByShift[shift] - 1 < ctx.quotas[shift]) score -= 2_500
 
   score += ctx.rng() * 5
   return score
@@ -194,6 +218,13 @@ export function pickAlCandidates(
     for (let j = 0; j < pool.length; j++) {
       const st = ctx.states.get(pool[j].id)
       if (!st) continue
+      const hard = needsHardRest(st)
+      const shift = ctx.assignedShift.get(pool[j].id)
+      if (
+        !hard &&
+        shift &&
+        ctx.availableByShift[shift] - 1 < ctx.quotas[shift]
+      ) continue
       // Prefer people already at OFF target for AL extras; still allow others if needed
       const s = scoreForAl(pool[j], ctx) + (st.offCount >= ctx.offTarget ? 200 : 0)
       if (s > bestScore) { bestScore = s; bestIdx = j }
