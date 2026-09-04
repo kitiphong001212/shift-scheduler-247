@@ -81,4 +81,21 @@ describe('validateSchedule', () => {
     })
     expect(r.conflicts.some((c) => c.type === 'FORBIDDEN_SHIFT_FOR_GROUP' && c.employeeId === 'E7')).toBe(true)
   })
+
+  it('treats OFF shortfall covered by AL as INFO not WARNING', () => {
+    const a1: Employee = { id: 'E2', code: 'E2', name: 'Short', active: true, defaultShift: 'A1' }
+    const entries = month.days.map((d, i) => ({
+      employeeId: 'E2',
+      date: d.date,
+      shift: (i < 6 ? 'OFF' : i < 8 ? 'AL' : 'A1') as never,
+      source: 'AUTO' as const
+    }))
+    // 6 OFF + 2 AL = 8 target
+    const r = validateSchedule({
+      employees: [a1], month, entries,
+      shiftAssignments: { E2: 'A1' }, leaveRequests: [], config
+    })
+    const c = r.conflicts.find((x) => x.type === 'OFF_TARGET_NOT_REACHED' && x.employeeId === 'E2')
+    expect(c?.severity).toBe('INFO')
+  })
 })
