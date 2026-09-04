@@ -1,24 +1,58 @@
 // tests/shiftRules.spec.ts
 import { describe, expect, it } from 'vitest'
-import { isTransitionAllowed, transitionViolation } from '@/services/shiftRules'
+import { isTransitionAllowed, transitionViolation, TRANSITION_MATRIX, SHIFT_CODES } from '@/services/shiftRules'
 
 describe('shift transition rules', () => {
-  it('allows the documented transitions', () => {
-    expect(isTransitionAllowed('A1', 'A7')).toBe(true)
-    expect(isTransitionAllowed('A7', 'A1')).toBe(true)
-    expect(isTransitionAllowed('A7', 'A5')).toBe(true)
-    expect(isTransitionAllowed('A5', 'A7')).toBe(true)
-    expect(isTransitionAllowed('A5', 'A6')).toBe(true)
+  it('matches the documented allow matrix', () => {
+    expect(TRANSITION_MATRIX.A1).toEqual({ A1: true, A7: true, A5: true, A6: false })
+    expect(TRANSITION_MATRIX.A7).toEqual({ A1: true, A7: true, A5: true, A6: false })
+    expect(TRANSITION_MATRIX.A5).toEqual({ A1: false, A7: false, A5: true, A6: true })
+    expect(TRANSITION_MATRIX.A6).toEqual({ A1: false, A7: false, A5: true, A6: true })
   })
-  it('forbids the documented transitions', () => {
-    expect(isTransitionAllowed('A1', 'A5')).toBe(false)
+
+  it('allows day-to-day transitions from the matrix', () => {
+    expect(isTransitionAllowed('A1', 'A1')).toBe(true)
+    expect(isTransitionAllowed('A1', 'A7')).toBe(true)
+    expect(isTransitionAllowed('A1', 'A5')).toBe(true)
+    expect(isTransitionAllowed('A7', 'A1')).toBe(true)
+    expect(isTransitionAllowed('A7', 'A7')).toBe(true)
+    expect(isTransitionAllowed('A7', 'A5')).toBe(true)
+    expect(isTransitionAllowed('A5', 'A5')).toBe(true)
+    expect(isTransitionAllowed('A5', 'A6')).toBe(true)
+    expect(isTransitionAllowed('A6', 'A6')).toBe(true)
+  })
+
+  it('forbids blocked transitions', () => {
     expect(isTransitionAllowed('A1', 'A6')).toBe(false)
+    expect(isTransitionAllowed('A7', 'A6')).toBe(false)
+    expect(isTransitionAllowed('A5', 'A1')).toBe(false)
+    expect(isTransitionAllowed('A5', 'A7')).toBe(false)
     expect(isTransitionAllowed('A6', 'A1')).toBe(false)
     expect(isTransitionAllowed('A6', 'A7')).toBe(false)
   })
-  it('treats A6 → A5 as needing rest', () => {
+
+  it('treats A6 → A5 as needing at least one OFF/AL day', () => {
     expect(transitionViolation('A6', 'A5')).toBe('A6_NO_REST')
+    expect(isTransitionAllowed('A6', 'A5')).toBe(false)
     expect(isTransitionAllowed('A6', 'OFF')).toBe(true)
     expect(isTransitionAllowed('OFF', 'A5')).toBe(true)
+    expect(isTransitionAllowed('A6', 'AL')).toBe(true)
+    expect(isTransitionAllowed('AL', 'A5')).toBe(true)
+  })
+
+  it('covers every shift pair explicitly', () => {
+    for (const from of SHIFT_CODES) {
+      for (const to of SHIFT_CODES) {
+        const allowed = TRANSITION_MATRIX[from][to]
+        if (from === 'A6' && to === 'A5') {
+          expect(transitionViolation(from, to)).toBe('A6_NO_REST')
+        } else if (allowed) {
+          expect(isTransitionAllowed(from, to)).toBe(true)
+        } else {
+          expect(isTransitionAllowed(from, to)).toBe(false)
+          expect(transitionViolation(from, to)).toBe('FORBIDDEN')
+        }
+      }
+    }
   })
 })
