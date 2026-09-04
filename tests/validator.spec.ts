@@ -82,6 +82,16 @@ describe('validateSchedule', () => {
     expect(r.conflicts.some((c) => c.type === 'FORBIDDEN_SHIFT_FOR_GROUP' && c.employeeId === 'E7')).toBe(true)
   })
 
+  it('flags A5 monthly group working A1', () => {
+    const a5: Employee = { id: 'E5', code: 'E5', name: 'Pattarapong', active: true, defaultShift: 'A5' }
+    const r = validateSchedule({
+      employees: [a5], month,
+      entries: [{ employeeId: 'E5', date: '2026-09-09', shift: 'A1', source: 'AUTO' }],
+      shiftAssignments: { E5: 'A5' }, leaveRequests: [], config
+    })
+    expect(r.conflicts.some((c) => c.type === 'FORBIDDEN_SHIFT_FOR_GROUP' && c.employeeId === 'E5')).toBe(true)
+  })
+
   it('treats OFF shortfall covered by AL as INFO not WARNING', () => {
     const a1: Employee = { id: 'E2', code: 'E2', name: 'Short', active: true, defaultShift: 'A1' }
     const entries = month.days.map((d, i) => ({

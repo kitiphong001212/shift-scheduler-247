@@ -62,12 +62,22 @@ describe('shift transition rules', () => {
     expect(isTransitionAllowed('A5', 'A6')).toBe(true)
   })
 
-  it('blocks A1/A7 monthly groups from ever working A6', () => {
+  it('restricts monthly home groups to eligible shifts only', () => {
+    expect(canWorkShift('A5', 'A5')).toBe(true)
+    expect(canWorkShift('A5', 'A6')).toBe(true)
+    expect(canWorkShift('A5', 'A1')).toBe(false)
+    expect(canWorkShift('A5', 'A7')).toBe(false)
+    expect(canWorkShift('A1', 'A1')).toBe(true)
+    expect(canWorkShift('A1', 'A7')).toBe(true)
+    expect(canWorkShift('A1', 'A5')).toBe(true)
     expect(canWorkShift('A1', 'A6')).toBe(false)
     expect(canWorkShift('A7', 'A6')).toBe(false)
-    expect(canWorkShift('A5', 'A6')).toBe(true)
     expect(canWorkShift('A6', 'A6')).toBe(true)
-    // OFF resets day-to-day transition, but home-group rule still forbids A6
+    expect(canWorkShift('A6', 'A5')).toBe(true)
+    expect(canWorkShift('A6', 'A1')).toBe(false)
+    // OFF resets day-to-day transition, but home-group rule still forbids illegal shifts
+    expect(isTransitionAllowed('OFF', 'A1')).toBe(true)
+    expect(canWorkShift('A5', 'A1')).toBe(false)
     expect(isTransitionAllowed('OFF', 'A6')).toBe(true)
     expect(canWorkShift('A7', 'A6')).toBe(false)
   })

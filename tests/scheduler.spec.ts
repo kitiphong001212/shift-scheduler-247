@@ -200,6 +200,47 @@ describe('generateSchedule', () => {
     expect(r.conflicts.filter((c) => c.type === 'FORBIDDEN_SHIFT_FOR_GROUP').length).toBe(0)
   })
 
+  it('never places A5 monthly group onto A1 or A7 (Pattarapong rule)', () => {
+    const r = generateSchedule({ employees, month, shiftAssignments: assignments, leaveRequests: [], config })
+    for (const e of r.schedule) {
+      const home = assignments[e.employeeId]
+      if (home === 'A5' && (e.shift === 'A1' || e.shift === 'A7')) {
+        throw new Error(`${e.employeeId} home A5 was placed on ${e.shift} at ${e.date}`)
+      }
+    }
+    expect(r.conflicts.filter((c) => c.type === 'FORBIDDEN_SHIFT_FOR_GROUP').length).toBe(0)
+  })
+
+  it('limits consecutive A6 cover days for A5-home staff', () => {
+    const a6 = employees.filter((e) => e.defaultShift === 'A6')
+    // Keep A6 short for several days so cover is needed repeatedly
+    const leaveRequests = a6.flatMap((e, i) =>
+      ['2026-09-10', '2026-09-11', '2026-09-12', '2026-09-13', '2026-09-14'].map((date, di) => ({
+        id: `a6-leave-${i}-${di}`,
+        employeeId: e.id,
+        date,
+        type: 'OFF' as const,
+        requestedAt: new Date(Date.UTC(2026, 8, 1, 7, i * 10 + di)).toISOString()
+      }))
+    )
+    const r = generateSchedule({ employees, month, shiftAssignments: assignments, leaveRequests, config })
+    const a5Ids = new Set(employees.filter((e) => e.defaultShift === 'A5').map((e) => e.id))
+    for (const empId of a5Ids) {
+      const cells = r.schedule
+        .filter((e) => e.employeeId === empId)
+        .sort((a, b) => a.date.localeCompare(b.date))
+      let streak = 0
+      for (const c of cells) {
+        if (c.shift === 'A6') {
+          streak++
+          expect(streak).toBeLessThanOrEqual(2)
+        } else {
+          streak = 0
+        }
+      }
+    }
+  })
+
   it('caps OFF at weekend target and turns extras into AL (Pattarapong rule)', () => {
     const dates = month.days.slice(0, 10).map((d) => d.date)
     const leaveRequests = dates.map((date, i) => ({

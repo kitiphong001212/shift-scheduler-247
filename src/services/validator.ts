@@ -72,7 +72,7 @@ export function validateSchedule(input: ValidateInput): ValidationResult {
         if (assigned && isShift(status) && !canWorkShift(assigned, status)) {
           push({
             type: 'FORBIDDEN_SHIFT_FOR_GROUP', severity: 'ERROR',
-            rule: 'A1/A7 monthly group must never work A6',
+            rule: 'Monthly home group cannot work this shift',
             date: day.date, employeeId: emp.id,
             message: `${emp.name}: monthly ${assigned} cannot work ${status}`,
             meta: { home: assigned, shift: status }
