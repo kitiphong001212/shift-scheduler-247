@@ -5,6 +5,7 @@ import { useLeaveStore } from '@/stores/leaveStore'
 import { useEmployeeStore } from '@/stores/employeeStore'
 import { useScheduleStore } from '@/stores/scheduleStore'
 import { useSettingsStore } from '@/stores/settingsStore'
+import { WEEKDAY_LABELS } from '@/utils/date'
 import type { LeaveType } from '@/types/leave'
 import ConflictBadge from '@/components/ConflictBadge.vue'
 
@@ -14,12 +15,13 @@ const schedule = useScheduleStore()
 const settings = useSettingsStore()
 
 const filter = ref<'ALL' | 'OFF' | 'AL' | 'CONFLICT'>('ALL')
-const form = reactive<{ employeeId: string; date: string; type: LeaveType; note: string }>({
+const form = reactive<{ employeeId: string; type: LeaveType; note: string }>({
   employeeId: employeeStore.activeEmployees[0]?.id ?? '',
-  date: settings.monthContext.days[0]?.date ?? '',
   type: 'AL',
   note: ''
 })
+const selectedDates = ref<string[]>([])
+const lastClicked = ref<string | null>(null)
 
 const conflictDates = computed(() => {
   const s = new Set<string>()
@@ -37,10 +39,60 @@ const rows = computed(() => {
   return all
 })
 
+const existingForEmployee = computed(() => {
+  const s = new Set<string>()
+  for (const r of leaveStore.requests) {
+    if (r.employeeId === form.employeeId) s.add(r.date)
+  }
+  return s
+})
+
+const calendarPad = computed(() => schedule.monthContext.days[0]?.weekday ?? 0)
+
+const selectedSet = computed(() => new Set(selectedDates.value))
+
+function toggleDate(date: string, event?: MouseEvent) {
+  if (existingForEmployee.value.has(date)) return
+  if (event?.shiftKey && lastClicked.value) {
+    selectRange(lastClicked.value, date)
+  } else {
+    const i = selectedDates.value.indexOf(date)
+    if (i >= 0) selectedDates.value = selectedDates.value.filter((d) => d !== date)
+    else selectedDates.value = [...selectedDates.value, date].sort()
+  }
+  lastClicked.value = date
+}
+
+function selectRange(from: string, to: string) {
+  const days = schedule.monthContext.days
+  const a = days.findIndex((d) => d.date === from)
+  const b = days.findIndex((d) => d.date === to)
+  if (a < 0 || b < 0) return
+  const [start, end] = a < b ? [a, b] : [b, a]
+  const next = new Set(selectedDates.value)
+  for (let i = start; i <= end; i++) {
+    const date = days[i].date
+    if (!existingForEmployee.value.has(date)) next.add(date)
+  }
+  selectedDates.value = [...next].sort()
+}
+
+function selectMatching(pred: (isWeekend: boolean) => boolean) {
+  selectedDates.value = schedule.monthContext.days
+    .filter((d) => pred(d.isWeekend) && !existingForEmployee.value.has(d.date))
+    .map((d) => d.date)
+}
+
+function clearSelection() {
+  selectedDates.value = []
+  lastClicked.value = null
+}
+
 function add() {
-  if (!form.employeeId || !form.date) return
-  leaveStore.addRequest(form.employeeId, form.date, form.type, form.note)
+  if (!form.employeeId || !selectedDates.value.length) return
+  leaveStore.addRequests(form.employeeId, selectedDates.value, form.type, form.note)
   form.note = ''
+  clearSelection()
 }
 </script>
 
@@ -59,24 +111,60 @@ function add() {
       </div>
     </header>
 
-    <div class="card grid gap-3 md:grid-cols-5 md:items-end">
-      <div class="md:col-span-2">
-        <label class="label">Employee</label>
-        <select v-model="form.employeeId" class="input">
-          <option v-for="e in employeeStore.activeEmployees" :key="e.id" :value="e.id">{{ e.name }} ({{ e.code }})</option>
-        </select>
+    <div class="card space-y-4">
+      <div class="grid gap-3 md:grid-cols-4 md:items-end">
+        <div class="md:col-span-2">
+          <label class="label">Employee</label>
+          <select v-model="form.employeeId" class="input" @change="clearSelection">
+            <option v-for="e in employeeStore.activeEmployees" :key="e.id" :value="e.id">{{ e.name }} ({{ e.code }})</option>
+          </select>
+        </div>
+        <div>
+          <label class="label">Type</label>
+          <select v-model="form.type" class="input"><option value="OFF">OFF</option><option value="AL">AL</option></select>
+        </div>
+        <button class="btn-primary justify-center" :disabled="!selectedDates.length" @click="add">
+          {{ selectedDates.length ? `+ Add ${selectedDates.length} Request${selectedDates.length === 1 ? '' : 's'}` : '+ Add Requests' }}
+        </button>
       </div>
+
       <div>
-        <label class="label">Date</label>
-        <select v-model="form.date" class="input">
-          <option v-for="d in schedule.monthContext.days" :key="d.date" :value="d.date">{{ d.date }} ({{ d.weekdayLabel }})</option>
-        </select>
+        <div class="mb-2 flex flex-wrap items-center justify-between gap-2">
+          <label class="label mb-0">Dates</label>
+          <div class="flex flex-wrap gap-1">
+            <button type="button" class="btn-ghost px-2 py-1 text-xs" @click="selectMatching(() => true)">All</button>
+            <button type="button" class="btn-ghost px-2 py-1 text-xs" @click="selectMatching((w) => !w)">Weekdays</button>
+            <button type="button" class="btn-ghost px-2 py-1 text-xs" @click="selectMatching((w) => w)">Weekends</button>
+            <button type="button" class="btn-ghost px-2 py-1 text-xs" @click="clearSelection">Clear</button>
+          </div>
+        </div>
+        <p class="mb-2 text-xs text-slate-500">Click to toggle days. Shift-click to select a range.</p>
+        <div class="grid grid-cols-7 gap-1">
+          <div v-for="label in WEEKDAY_LABELS" :key="label" class="py-1 text-center text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+            {{ label }}
+          </div>
+          <div v-for="n in calendarPad" :key="`pad-${n}`" />
+          <button
+            v-for="d in schedule.monthContext.days"
+            :key="d.date"
+            type="button"
+            class="rounded-md border px-1 py-2 text-center text-sm leading-tight transition-colors"
+            :disabled="existingForEmployee.has(d.date)"
+            :class="existingForEmployee.has(d.date)
+              ? 'cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400'
+              : selectedSet.has(d.date)
+                ? 'border-slate-900 bg-slate-900 text-white'
+                : d.isWeekend
+                  ? 'border-amber-200 bg-amber-50 text-amber-900 hover:border-slate-400'
+                  : 'border-slate-200 bg-white text-slate-800 hover:border-slate-400'"
+            :title="existingForEmployee.has(d.date) ? 'Already requested' : d.date"
+            @click="toggleDate(d.date, $event)"
+          >
+            <span class="block font-semibold">{{ d.day }}</span>
+            <span class="block text-[10px] opacity-70">{{ d.weekdayLabel }}</span>
+          </button>
+        </div>
       </div>
-      <div>
-        <label class="label">Type</label>
-        <select v-model="form.type" class="input"><option value="OFF">OFF</option><option value="AL">AL</option></select>
-      </div>
-      <button class="btn-primary justify-center" @click="add">+ Add Request</button>
     </div>
 
     <div class="card overflow-x-auto">
