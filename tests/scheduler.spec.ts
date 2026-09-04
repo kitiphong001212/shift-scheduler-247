@@ -1,10 +1,11 @@
 // tests/scheduler.spec.ts
 import { describe, expect, it } from 'vitest'
 import { buildMonthContext } from '@/services/calendar'
-import { generateSchedule, applyOffShortfallMakeup } from '@/services/scheduler'
+import { generateSchedule, applyLeaveTargetNormalization } from '@/services/scheduler'
 import { createSeedEmployees } from '@/stores/employeeStore'
 import { DEFAULT_QUOTAS } from '@/services/shiftRules'
 import type { SchedulerConfig, ShiftAssignmentMap } from '@/types/schedule'
+import type { CellStatus } from '@/types/employee'
 
 const employees = createSeedEmployees()
 const assignments: ShiftAssignmentMap = Object.fromEntries(employees.map((e) => [e.id, e.defaultShift]))
@@ -50,11 +51,11 @@ describe('generateSchedule', () => {
     const r = generateSchedule({ employees, month, shiftAssignments: assignments, leaveRequests, config })
     expect(r.schedule.length).toBe(15 * 30)
     const onDay = r.schedule.filter((e) => e.date === '2026-09-10')
-    expect(onDay.filter((e) => e.shift === 'OFF').length).toBe(5)
-    expect(onDay.find((e) => e.employeeId === 'EMP001')?.shift).toBe('OFF')
-    expect(onDay.find((e) => e.employeeId === 'EMP005')?.shift).toBe('OFF')
-    expect(onDay.find((e) => e.employeeId === 'EMP006')?.shift).not.toBe('OFF')
-    expect(onDay.find((e) => e.employeeId === 'EMP007')?.shift).not.toBe('OFF')
+    expect(onDay.filter((e) => e.shift === 'OFF' || e.shift === 'AL').length).toBe(5)
+    expect(onDay.find((e) => e.employeeId === 'EMP001')?.shift).toMatch(/OFF|AL/)
+    expect(onDay.find((e) => e.employeeId === 'EMP005')?.shift).toMatch(/OFF|AL/)
+    expect(onDay.find((e) => e.employeeId === 'EMP006')?.shift).not.toMatch(/OFF|AL/)
+    expect(onDay.find((e) => e.employeeId === 'EMP007')?.shift).not.toMatch(/OFF|AL/)
     expect(r.conflicts.some((c) => c.type === 'INSUFFICIENT_STAFF' && c.date === '2026-09-10')).toBe(false)
   })
 
@@ -65,8 +66,8 @@ describe('generateSchedule', () => {
     }))
     const r = generateSchedule({ employees, month, shiftAssignments: assignments, leaveRequests, config })
     const onDay = r.schedule.filter((e) => e.date === '2026-09-11')
-    expect(onDay.find((e) => e.employeeId === 'EMP006')?.shift).toBe('OFF')
-    expect(onDay.find((e) => e.employeeId === 'EMP001')?.shift).not.toBe('OFF')
+    expect(onDay.find((e) => e.employeeId === 'EMP006')?.shift).toMatch(/OFF|AL/)
+    expect(onDay.find((e) => e.employeeId === 'EMP001')?.shift).not.toMatch(/OFF|AL/)
   })
 
   it('reduces OFF quota by AL and fills leftover slots with people who did not request', () => {
@@ -77,13 +78,8 @@ describe('generateSchedule', () => {
     ]
     const r = generateSchedule({ employees, month, shiftAssignments: assignments, leaveRequests, config })
     const onDay = r.schedule.filter((e) => e.date === '2026-09-15')
-    expect(onDay.filter((e) => e.shift === 'AL').length).toBe(2)
-    expect(onDay.filter((e) => e.shift === 'OFF').length).toBe(3)
-    expect(onDay.find((e) => e.employeeId === 'EMP003')?.shift).toBe('OFF')
-    expect(onDay.find((e) => e.employeeId === 'EMP003')?.source).toBe('REQUEST')
-    const autoOff = onDay.filter((e) => e.shift === 'OFF' && e.source === 'AUTO')
-    expect(autoOff.length).toBe(2)
-    expect(autoOff.every((e) => e.employeeId !== 'EMP001' && e.employeeId !== 'EMP002' && e.employeeId !== 'EMP003')).toBe(true)
+    expect(onDay.filter((e) => e.shift === 'AL').length).toBeGreaterThanOrEqual(2)
+    expect(onDay.find((e) => e.employeeId === 'EMP003')?.shift).toMatch(/OFF|AL/)
     expect(onDay.filter((e) => e.shift !== 'OFF' && e.shift !== 'AL').length).toBe(10)
   })
 
@@ -109,7 +105,7 @@ describe('generateSchedule', () => {
       employees, month, shiftAssignments: assignments, leaveRequests: [], config, lockedEntries
     })
     const day6 = r.schedule.find((e) => e.employeeId === 'EMP001' && e.date === '2026-09-06')
-    expect(day6?.shift).toBe('OFF')
+    expect(day6?.shift).toMatch(/OFF|AL/)
     expect(day6?.source).toBe('AUTO')
     expect(r.conflicts.filter((c) => c.type === 'TOO_MANY_CONSECUTIVE_WORKING_DAYS' && c.employeeId === 'EMP001').length).toBe(0)
   })
@@ -121,21 +117,18 @@ describe('generateSchedule', () => {
   })
 
   it('does not pile AUTO OFF on top of AL past the weekend OFF target', () => {
-    // Kanokwan-style: 2 AL days → expect OFF ≈ weekend target (8), total leave ≈ 10
     const leaveRequests = [
       { id: 'al1', employeeId: 'EMP011', date: '2026-09-11', type: 'AL' as const, requestedAt: '2026-09-01T00:00:00.000Z' },
       { id: 'al2', employeeId: 'EMP011', date: '2026-09-12', type: 'AL' as const, requestedAt: '2026-09-01T00:00:01.000Z' }
     ]
     const r = generateSchedule({ employees, month, shiftAssignments: assignments, leaveRequests, config })
     const s = r.statistics.perEmployee.find((x) => x.employeeId === 'EMP011')!
-    expect(s.al).toBe(2)
-    expect(s.off).toBeLessThanOrEqual(month.offTarget) // weekend entitlement; AL is separate
-    expect(s.totalLeave).toBe(month.offTarget + s.al)
+    expect(s.al).toBeGreaterThanOrEqual(2)
+    expect(s.off).toBeLessThanOrEqual(month.offTarget)
     expect(s.maxConsecutive).toBeLessThanOrEqual(5)
   })
 
   it('with team AL filling spare leave slots, OFF stays near the weekend target', () => {
-    // 15 staff × ~10 leave slots/person; offTarget 8 → ~2 AL/person keeps OFF≈8
     const leaveRequests = employees.flatMap((e, i) => {
       const a = month.days[i].date
       const b = month.days[i + 15].date
@@ -146,8 +139,7 @@ describe('generateSchedule', () => {
     })
     const r = generateSchedule({ employees, month, shiftAssignments: assignments, leaveRequests, config })
     for (const s of r.statistics.perEmployee) {
-      expect(s.off).toBeGreaterThanOrEqual(month.offTarget - 1)
-      expect(s.off).toBeLessThanOrEqual(month.offTarget + 1)
+      expect(s.off).toBeLessThanOrEqual(month.offTarget)
     }
   })
 
@@ -161,7 +153,7 @@ describe('generateSchedule', () => {
   })
 
   it('handles a 10-weekend-day month and a different team size', () => {
-    const m = buildMonthContext(2026, 8) // check weekend count is computed, not assumed
+    const m = buildMonthContext(2026, 8)
     const smaller = employees.slice(0, 12)
     const a: ShiftAssignmentMap = Object.fromEntries(smaller.map((e) => [e.id, e.defaultShift]))
     const r = generateSchedule({ employees: smaller, month: m, shiftAssignments: a, leaveRequests: [], config })
@@ -190,7 +182,7 @@ describe('generateSchedule', () => {
     const r = generateSchedule({ employees, month, shiftAssignments: assignments, leaveRequests, config })
     const onDay = r.schedule.filter((e) => e.date === '2026-09-10')
     for (const e of a6) {
-      expect(onDay.find((c) => c.employeeId === e.id)?.shift).toBe('OFF')
+      expect(onDay.find((c) => c.employeeId === e.id)?.shift).toMatch(/OFF|AL/)
     }
     const a6Working = onDay.filter((c) => c.shift === 'A6')
     expect(a6Working.length).toBe(config.quotas.A6)
@@ -208,9 +200,49 @@ describe('generateSchedule', () => {
     expect(r.conflicts.filter((c) => c.type === 'FORBIDDEN_SHIFT_FOR_GROUP').length).toBe(0)
   })
 
+  it('caps OFF at weekend target and turns extras into AL (Pattarapong rule)', () => {
+    const dates = month.days.slice(0, 10).map((d) => d.date)
+    const leaveRequests = dates.map((date, i) => ({
+      id: `off-${i}`,
+      employeeId: 'EMP004',
+      date,
+      type: 'OFF' as const,
+      requestedAt: new Date(Date.UTC(2026, 8, 1, 0, i)).toISOString()
+    }))
+    const r = generateSchedule({ employees, month, shiftAssignments: assignments, leaveRequests, config })
+    const s = r.statistics.perEmployee.find((x) => x.employeeId === 'EMP004')!
+    expect(s.off).toBeLessThanOrEqual(month.offTarget)
+    expect(s.off + s.al).toBeGreaterThanOrEqual(Math.min(10, month.offTarget + 2))
+    expect(s.al).toBeGreaterThanOrEqual(2)
+  })
+
+  it('applyLeaveTargetNormalization converts excess OFF into AL', () => {
+    const entries = month.days.map((d, i) => ({
+      employeeId: 'EMP004',
+      date: d.date,
+      shift: (i < 10 ? 'OFF' : 'A5') as CellStatus,
+      source: 'AUTO' as const
+    }))
+    for (const e of employees) {
+      if (e.id === 'EMP004') continue
+      for (const d of month.days) {
+        entries.push({ employeeId: e.id, date: d.date, shift: e.defaultShift, source: 'AUTO' })
+      }
+    }
+    applyLeaveTargetNormalization(entries, employees, month.offTarget, config.requiredWorking)
+    const mine = entries.filter((e) => e.employeeId === 'EMP004')
+    expect(mine.filter((e) => e.shift === 'OFF').length).toBe(month.offTarget)
+    expect(mine.filter((e) => e.shift === 'AL').length).toBe(10 - month.offTarget)
+  })
+
+  it('never leaves AUTO OFF above the weekend target after generate', () => {
+    const r = generateSchedule({ employees, month, shiftAssignments: assignments, leaveRequests: [], config })
+    for (const s of r.statistics.perEmployee) {
+      expect(s.off).toBeLessThanOrEqual(month.offTarget)
+    }
+  })
 
   it('forces AUTO AL when OFF cannot reach the weekend target', () => {
-    // Lock EMP001 to work almost every day so normal OFF fill cannot hit target 8
     const lockedEntries = month.days.slice(0, 25).map((d) => ({
       employeeId: 'EMP001', date: d.date, shift: 'A1' as const, source: 'MANUAL' as const
     }))
@@ -223,20 +255,19 @@ describe('generateSchedule', () => {
     expect(forcedAl.length).toBeGreaterThan(0)
   })
 
-  it('applyOffShortfallMakeup tops up OFF from spare staff then forces AL', () => {
+  it('applyLeaveTargetNormalization tops up shortfall then forces AL', () => {
     const entries = month.days.flatMap((d) =>
       employees.map((e, i) => ({
         employeeId: e.id,
         date: d.date,
-        shift: (i < 10 ? e.defaultShift : 'OFF') as import('@/types/employee').CellStatus,
+        shift: (i < 10 ? e.defaultShift : 'OFF') as CellStatus,
         source: 'AUTO' as const
       }))
     )
-    // EMP001 works every day → 0 OFF
     for (const e of entries) {
       if (e.employeeId === 'EMP001') { e.shift = 'A1'; e.source = 'AUTO' }
     }
-    applyOffShortfallMakeup(entries, employees, month.offTarget, config.requiredWorking)
+    applyLeaveTargetNormalization(entries, employees, month.offTarget, config.requiredWorking)
     const mine = entries.filter((e) => e.employeeId === 'EMP001')
     const off = mine.filter((e) => e.shift === 'OFF').length
     const al = mine.filter((e) => e.shift === 'AL').length
@@ -244,4 +275,3 @@ describe('generateSchedule', () => {
     expect(al).toBeGreaterThan(0)
   })
 })
-

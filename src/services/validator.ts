@@ -130,10 +130,10 @@ export function validateSchedule(input: ValidateInput): ValidationResult {
     } else if (off > month.offTarget) {
       push({
         type: 'OFF_TARGET_NOT_REACHED', severity: 'INFO',
-        rule: 'Daily staffing forces extra OFF days',
+        rule: 'Prefer converting excess OFF to AL (weekend entitlement)',
         employeeId: emp.id,
         message: `${emp.name}: OFF ${off}/${month.offTarget} (+${off - month.offTarget} above entitlement)`,
-        meta: { actual: off, target: month.offTarget }
+        meta: { actual: off, target: month.offTarget, al }
       })
     }
 
