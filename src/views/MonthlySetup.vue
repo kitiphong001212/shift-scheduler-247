@@ -105,7 +105,7 @@ const groupCounts = computed(() => {
     <div class="card">
       <div class="mb-3 flex items-center justify-between">
         <h2 class="text-sm font-semibold">Monthly Shift Assignment</h2>
-        <button class="btn-ghost" @click="schedule.resetAssignmentsToDefault()">Reset to default shift</button>
+        <button class="btn-ghost" @click="schedule.resetAssignmentsToDefault()">Reset seed distribution</button>
       </div>
 
       <div class="overflow-x-auto">
