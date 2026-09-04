@@ -1,7 +1,7 @@
 // tests/scheduler.spec.ts
 import { describe, expect, it } from 'vitest'
 import { buildMonthContext } from '@/services/calendar'
-import { generateSchedule } from '@/services/scheduler'
+import { generateSchedule, applyOffShortfallMakeup } from '@/services/scheduler'
 import { createSeedEmployees } from '@/stores/employeeStore'
 import { DEFAULT_QUOTAS } from '@/services/shiftRules'
 import type { SchedulerConfig, ShiftAssignmentMap } from '@/types/schedule'
@@ -207,4 +207,41 @@ describe('generateSchedule', () => {
     }
     expect(r.conflicts.filter((c) => c.type === 'FORBIDDEN_SHIFT_FOR_GROUP').length).toBe(0)
   })
+
+
+  it('forces AUTO AL when OFF cannot reach the weekend target', () => {
+    // Lock EMP001 to work almost every day so normal OFF fill cannot hit target 8
+    const lockedEntries = month.days.slice(0, 25).map((d) => ({
+      employeeId: 'EMP001', date: d.date, shift: 'A1' as const, source: 'MANUAL' as const
+    }))
+    const r = generateSchedule({
+      employees, month, shiftAssignments: assignments, leaveRequests: [], config, lockedEntries
+    })
+    const s = r.statistics.perEmployee.find((x) => x.employeeId === 'EMP001')!
+    expect(s.off + s.al).toBeGreaterThanOrEqual(month.offTarget)
+    const forcedAl = r.schedule.filter((e) => e.employeeId === 'EMP001' && e.shift === 'AL' && e.source === 'AUTO')
+    expect(forcedAl.length).toBeGreaterThan(0)
+  })
+
+  it('applyOffShortfallMakeup tops up OFF from spare staff then forces AL', () => {
+    const entries = month.days.flatMap((d) =>
+      employees.map((e, i) => ({
+        employeeId: e.id,
+        date: d.date,
+        shift: (i < 10 ? e.defaultShift : 'OFF') as import('@/types/employee').CellStatus,
+        source: 'AUTO' as const
+      }))
+    )
+    // EMP001 works every day → 0 OFF
+    for (const e of entries) {
+      if (e.employeeId === 'EMP001') { e.shift = 'A1'; e.source = 'AUTO' }
+    }
+    applyOffShortfallMakeup(entries, employees, month.offTarget, config.requiredWorking)
+    const mine = entries.filter((e) => e.employeeId === 'EMP001')
+    const off = mine.filter((e) => e.shift === 'OFF').length
+    const al = mine.filter((e) => e.shift === 'AL').length
+    expect(off + al).toBeGreaterThanOrEqual(month.offTarget)
+    expect(al).toBeGreaterThan(0)
+  })
 })
+

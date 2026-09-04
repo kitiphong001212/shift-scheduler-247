@@ -2,7 +2,7 @@
 import type { CellStatus, Employee, ShiftCode } from '@/types/employee'
 import type { GenerateInput, GenerateResult, ScheduleEntry, AssignmentSource } from '@/types/schedule'
 import type { LeaveRequest } from '@/types/leave'
-import { SHIFT_CODES, MAX_CONSECUTIVE_WORKING_DAYS, LAST_RESORT_COVER_FOR, isTransitionAllowed, canWorkShift } from './shiftRules'
+import { SHIFT_CODES, MAX_CONSECUTIVE_WORKING_DAYS, LAST_RESORT_COVER_FOR, isTransitionAllowed, canWorkShift, isShift } from './shiftRules'
 import { pickOffCandidates, type EmployeeState, type OffPickContext } from './fairness'
 import { cellKey, mulberry32 } from '@/utils/date'
 import { validateSchedule } from './validator'
@@ -32,6 +32,8 @@ export function compareOffRequestOrder(a: LeaveRequest, b: LeaveRequest): number
  * 4. Leftover quota is filled with Fair Random among people who did not request OFF,
  *    preferring staff still under the weekend OFF target. People who already hit the
  *    target (or have upcoming AL) are only used if staffing still needs more OFF.
+ * 5. After the month is built: top up OFF where spare staffing exists; any remaining
+ *    OFF-target shortfall is filled by forced AUTO AL.
  */
 export function generateSchedule(input: GenerateInput): GenerateResult {
   const { month, config, shiftAssignments } = input
@@ -195,6 +197,8 @@ export function generateSchedule(input: GenerateInput): GenerateResult {
     }
   })
 
+  applyOffShortfallMakeup(schedule, employees, month.offTarget, config.requiredWorking)
+
   const validation = validateSchedule({
     employees: input.employees,
     month,
@@ -205,6 +209,87 @@ export function generateSchedule(input: GenerateInput): GenerateResult {
   })
 
   return { schedule, conflicts: validation.conflicts, statistics: validation.statistics }
+}
+
+/**
+ * If someone is still under the weekend OFF target after generate:
+ * 1) Convert spare working days (working > required) into OFF where possible
+ * 2) Force AUTO AL for any remaining shortfall
+ */
+export function applyOffShortfallMakeup(
+  schedule: ScheduleEntry[],
+  employees: Employee[],
+  offTarget: number,
+  requiredWorking: number
+): void {
+  const byDate = new Map<string, ScheduleEntry[]>()
+  const byEmp = new Map<string, ScheduleEntry[]>()
+  for (const e of schedule) {
+    ;(byDate.get(e.date) ?? byDate.set(e.date, []).get(e.date)!).push(e)
+    ;(byEmp.get(e.employeeId) ?? byEmp.set(e.employeeId, []).get(e.employeeId)!).push(e)
+  }
+
+  const workingCount = (date: string) =>
+    (byDate.get(date) ?? []).filter((e) => isShift(e.shift)).length
+
+  const offCountOf = (employeeId: string) =>
+    (byEmp.get(employeeId) ?? []).filter((e) => e.shift === 'OFF').length
+
+  // --- Pass 1: top up OFF using spare daily staffing ---
+  const shortEmp = employees
+    .map((e) => ({ e, need: offTarget - offCountOf(e.id) }))
+    .filter((x) => x.need > 0)
+    .sort((a, b) => b.need - a.need)
+
+  for (const { e, need: initialNeed } of shortEmp) {
+    let need = offTarget - offCountOf(e.id)
+    if (need <= 0) continue
+    const cells = (byEmp.get(e.id) ?? [])
+      .filter((c) => isShift(c.shift) && c.source !== 'MANUAL')
+      .slice()
+      .sort((a, b) => {
+        const spareA = workingCount(a.date) - requiredWorking
+        const spareB = workingCount(b.date) - requiredWorking
+        if (spareA !== spareB) return spareB - spareA
+        return b.date.localeCompare(a.date)
+      })
+
+    for (const cell of cells) {
+      if (need <= 0) break
+      if (workingCount(cell.date) <= requiredWorking) continue
+      cell.shift = 'OFF'
+      cell.source = 'AUTO'
+      need--
+    }
+    void initialNeed
+  }
+
+  // --- Pass 2: force AL for remaining OFF-target shortfall ---
+  for (const emp of employees) {
+    let need = offTarget - offCountOf(emp.id)
+    if (need <= 0) continue
+
+    const cells = (byEmp.get(emp.id) ?? [])
+      .filter((c) => isShift(c.shift))
+      .slice()
+      .sort((a, b) => {
+        // Prefer non-manual, then days with more spare staff, then later dates
+        const manA = a.source === 'MANUAL' ? 1 : 0
+        const manB = b.source === 'MANUAL' ? 1 : 0
+        if (manA !== manB) return manA - manB
+        const spareA = workingCount(a.date) - requiredWorking
+        const spareB = workingCount(b.date) - requiredWorking
+        if (spareA !== spareB) return spareB - spareA
+        return b.date.localeCompare(a.date)
+      })
+
+    for (const cell of cells) {
+      if (need <= 0) break
+      cell.shift = 'AL'
+      cell.source = 'AUTO'
+      need--
+    }
+  }
 }
 
 function legalShiftFor(prev: CellStatus | null, preferred: ShiftCode, home: ShiftCode): ShiftCode {
