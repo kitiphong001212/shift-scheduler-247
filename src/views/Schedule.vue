@@ -32,6 +32,16 @@ const filteredConflicts = computed(() =>
     : schedule.conflicts.filter((c) => c.severity === conflictFilter.value)
 )
 
+const quotaDaysMet = computed(() =>
+  schedule.statistics.perDay.filter((d) => d.quotaMet).length
+)
+const quotaDayTotal = computed(() => schedule.statistics.perDay.length)
+
+function dayLabel(date: string): string {
+  const d = schedule.monthContext.days.find((x) => x.date === date)
+  return d ? `${d.weekdayLabel} ${d.day}` : date
+}
+
 function confirmGenerate() {
   schedule.generate({ preserveManual: preserveManual.value })
   showConfirm.value = false
@@ -117,6 +127,57 @@ const editingConflicts = computed(() =>
           </tr>
         </tbody>
       </table>
+
+      <div class="mt-6 border-t border-slate-100 pt-4">
+        <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <h3 class="text-sm font-semibold">Shift quota per day</h3>
+          <span
+            class="text-xs font-semibold"
+            :class="quotaDaysMet === quotaDayTotal ? 'text-emerald-600' : 'text-amber-600'"
+          >
+            {{ quotaDaysMet }}/{{ quotaDayTotal }} days met
+            <span v-if="quotaDaysMet === quotaDayTotal" aria-label="all quotas met">✓</span>
+          </span>
+        </div>
+        <p class="mb-2 text-xs text-slate-500">
+          Target: {{ SHIFT_CODES.map((s) => `${s}=${settings.quotas[s]}`).join(' · ') }}
+        </p>
+        <table class="w-full">
+          <thead>
+            <tr>
+              <th class="th">Date</th>
+              <th v-for="s in SHIFT_CODES" :key="s" class="th">{{ s }}</th>
+              <th class="th">Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="d in schedule.statistics.perDay" :key="d.date">
+              <td class="td whitespace-nowrap">{{ dayLabel(d.date) }}</td>
+              <td
+                v-for="s in SHIFT_CODES" :key="s"
+                class="td"
+                :class="d.byShift[s] === settings.quotas[s] ? 'text-emerald-700' : 'text-amber-700 font-semibold'"
+              >
+                {{ d.byShift[s] }}/{{ settings.quotas[s] }}
+              </td>
+              <td class="td">
+                <span
+                  v-if="d.quotaMet"
+                  class="inline-flex h-6 w-6 items-center justify-center rounded-full bg-emerald-50 text-sm font-bold text-emerald-700"
+                  title="All shift quotas met"
+                  aria-label="quota met"
+                >✓</span>
+                <span
+                  v-else
+                  class="inline-flex h-6 w-6 items-center justify-center rounded-full bg-amber-50 text-sm font-bold text-amber-700"
+                  title="Shift quota short or over"
+                  aria-label="quota not met"
+                >!</span>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
     </div>
 
     <!-- Conflict list -->

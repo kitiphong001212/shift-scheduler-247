@@ -92,6 +92,63 @@ describe('validateSchedule', () => {
     expect(r.conflicts.some((c) => c.type === 'FORBIDDEN_SHIFT_FOR_GROUP' && c.employeeId === 'E5')).toBe(true)
   })
 
+  it('marks quotaMet when every shift hits its daily quota', () => {
+    const team: Employee[] = [
+      { id: 'a1a', code: 'a1a', name: 'A1a', active: true, defaultShift: 'A1' },
+      { id: 'a1b', code: 'a1b', name: 'A1b', active: true, defaultShift: 'A1' },
+      { id: 'a1c', code: 'a1c', name: 'A1c', active: true, defaultShift: 'A1' },
+      { id: 'a7a', code: 'a7a', name: 'A7a', active: true, defaultShift: 'A7' },
+      { id: 'a7b', code: 'a7b', name: 'A7b', active: true, defaultShift: 'A7' },
+      { id: 'a5a', code: 'a5a', name: 'A5a', active: true, defaultShift: 'A5' },
+      { id: 'a5b', code: 'a5b', name: 'A5b', active: true, defaultShift: 'A5' },
+      { id: 'a5c', code: 'a5c', name: 'A5c', active: true, defaultShift: 'A5' },
+      { id: 'a6a', code: 'a6a', name: 'A6a', active: true, defaultShift: 'A6' },
+      { id: 'a6b', code: 'a6b', name: 'A6b', active: true, defaultShift: 'A6' },
+      { id: 'off1', code: 'off1', name: 'Off1', active: true, defaultShift: 'A1' },
+      { id: 'off2', code: 'off2', name: 'Off2', active: true, defaultShift: 'A5' }
+    ]
+    const date = '2026-09-10'
+    const shifts: Record<string, string> = {
+      a1a: 'A1', a1b: 'A1', a1c: 'A1',
+      a7a: 'A7', a7b: 'A7',
+      a5a: 'A5', a5b: 'A5', a5c: 'A5',
+      a6a: 'A6', a6b: 'A6',
+      off1: 'OFF', off2: 'OFF'
+    }
+    const entries = team.map((e) => ({
+      employeeId: e.id, date, shift: shifts[e.id] as never, source: 'AUTO' as const
+    }))
+    const assignments = Object.fromEntries(team.map((e) => [e.id, e.defaultShift]))
+    const r = validateSchedule({
+      employees: team, month, entries, shiftAssignments: assignments, leaveRequests: [], config
+    })
+    const day = r.statistics.perDay.find((d) => d.date === date)!
+    expect(day.byShift).toEqual({ A1: 3, A7: 2, A5: 3, A6: 2 })
+    expect(day.quotaMet).toBe(true)
+    expect(r.conflicts.filter((c) => c.type === 'SHIFT_QUOTA_MISMATCH' && c.date === date)).toHaveLength(0)
+  })
+
+  it('clears quotaMet when any shift misses its daily quota', () => {
+    const team: Employee[] = [
+      { id: 'a1a', code: 'a1a', name: 'A1a', active: true, defaultShift: 'A1' },
+      { id: 'a1b', code: 'a1b', name: 'A1b', active: true, defaultShift: 'A1' },
+      { id: 'a7a', code: 'a7a', name: 'A7a', active: true, defaultShift: 'A7' },
+      { id: 'a5a', code: 'a5a', name: 'A5a', active: true, defaultShift: 'A5' },
+      { id: 'a6a', code: 'a6a', name: 'A6a', active: true, defaultShift: 'A6' }
+    ]
+    const date = '2026-09-11'
+    const entries = team.map((e) => ({
+      employeeId: e.id, date, shift: e.defaultShift as never, source: 'AUTO' as const
+    }))
+    const assignments = Object.fromEntries(team.map((e) => [e.id, e.defaultShift]))
+    const r = validateSchedule({
+      employees: team, month, entries, shiftAssignments: assignments, leaveRequests: [], config
+    })
+    const day = r.statistics.perDay.find((d) => d.date === date)!
+    expect(day.quotaMet).toBe(false)
+    expect(r.conflicts.some((c) => c.type === 'SHIFT_QUOTA_MISMATCH' && c.date === date)).toBe(true)
+  })
+
   it('treats OFF shortfall covered by AL as INFO not WARNING', () => {
     const a1: Employee = { id: 'E2', code: 'E2', name: 'Short', active: true, defaultShift: 'A1' }
     const entries = month.days.map((d, i) => ({

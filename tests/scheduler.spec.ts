@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { buildMonthContext } from '@/services/calendar'
 import { generateSchedule, applyLeaveTargetNormalization } from '@/services/scheduler'
 import { createSeedEmployees } from '@/stores/employeeStore'
-import { DEFAULT_QUOTAS } from '@/services/shiftRules'
+import { DEFAULT_QUOTAS, SHIFT_CODES } from '@/services/shiftRules'
 import type { SchedulerConfig, ShiftAssignmentMap } from '@/types/schedule'
 import type { CellStatus } from '@/types/employee'
 
@@ -30,6 +30,14 @@ describe('generateSchedule', () => {
   it('keeps exactly 10 people working each day (staffing-first)', () => {
     const r = generateSchedule({ employees, month, shiftAssignments: assignments, leaveRequests: [], config })
     for (const d of r.statistics.perDay) expect(d.working).toBe(10)
+  })
+
+  it('sets quotaMet true only on days that hit every shift quota', () => {
+    const r = generateSchedule({ employees, month, shiftAssignments: assignments, leaveRequests: [], config })
+    for (const d of r.statistics.perDay) {
+      const allMatch = SHIFT_CODES.every((s) => d.byShift[s] === config.quotas[s])
+      expect(d.quotaMet).toBe(allMatch)
+    }
   })
 
   it('respects AL requests (priority 1)', () => {
