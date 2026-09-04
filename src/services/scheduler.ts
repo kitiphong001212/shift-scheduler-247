@@ -29,7 +29,9 @@ export function compareOffRequestOrder(a: LeaveRequest, b: LeaveRequest): number
  * 3. OFF requests are granted first-come (requestedAt) up to remaining quota.
  *    Late requests past quota must work that day (not eligible for AUTO OFF),
  *    unless they hit the consecutive-work hard rule above.
- * 4. Leftover quota is filled with Fair Random among people who did not request OFF.
+ * 4. Leftover quota is filled with Fair Random among people who did not request OFF,
+ *    preferring staff still under the weekend OFF target. People who already hit the
+ *    target (or have upcoming AL) are only used if staffing still needs more OFF.
  */
 export function generateSchedule(input: GenerateInput): GenerateResult {
   const { month, config, shiftAssignments } = input
@@ -124,6 +126,15 @@ export function generateSchedule(input: GenerateInput): GenerateResult {
         availableByShift[s] += 1
       }
 
+      const remainingAlByEmployee = new Map<string, number>()
+      const plannedAlByEmployee = new Map<string, number>()
+      for (const e of employees) {
+        const taken = states.get(e.id)?.alCount ?? 0
+        const planned = requests.filter((r) => r.employeeId === e.id && r.type === 'AL').length
+        plannedAlByEmployee.set(e.id, planned)
+        remainingAlByEmployee.set(e.id, Math.max(0, planned - taken))
+      }
+
       const ctx: OffPickContext = {
         states,
         assignedShift,
@@ -132,6 +143,8 @@ export function generateSchedule(input: GenerateInput): GenerateResult {
         offTarget: month.offTarget,
         daysRemaining: month.days.length - dayIndex,
         offPolicy: config.offPolicy,
+        plannedAlByEmployee,
+        remainingAlByEmployee,
         rng
       }
 
