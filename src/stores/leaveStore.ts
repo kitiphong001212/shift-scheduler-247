@@ -14,7 +14,11 @@ export const useLeaveStore = defineStore('leave', () => {
   )
 
   function addRequest(employeeId: string, date: string, type: LeaveType, note = '') {
+    if (requests.value.some((r) => r.employeeId === employeeId && r.date === date)) return
     requests.value.push({ id: uid('LR'), employeeId, date, type, note })
+  }
+  function addRequests(employeeId: string, dates: string[], type: LeaveType, note = '') {
+    for (const date of dates) addRequest(employeeId, date, type, note)
   }
   function updateRequest(id: string, patch: Partial<Omit<LeaveRequest, 'id'>>) {
     const i = requests.value.findIndex((r) => r.id === id)
@@ -27,5 +31,5 @@ export const useLeaveStore = defineStore('leave', () => {
     requests.value = requests.value.filter((r) => !r.date.startsWith(monthKey))
   }
 
-  return { requests, byMonth, addRequest, updateRequest, removeRequest, clearMonth }
+  return { requests, byMonth, addRequest, addRequests, updateRequest, removeRequest, clearMonth }
 })
