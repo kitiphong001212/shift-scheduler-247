@@ -60,6 +60,8 @@ export interface DayStat {
   off: number
   al: number
   byShift: Record<ShiftCode, number>
+  /** True when every shift code hits its configured daily quota. */
+  quotaMet: boolean
   conflicts: number
 }
 

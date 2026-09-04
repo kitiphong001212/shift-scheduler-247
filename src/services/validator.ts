@@ -207,8 +207,10 @@ export function validateSchedule(input: ValidateInput): ValidationResult {
       })
     }
 
+    let quotaMet = true
     for (const s of SHIFT_CODES) {
       if (byShift[s] !== config.quotas[s]) {
+        quotaMet = false
         push({
           type: 'SHIFT_QUOTA_MISMATCH', severity: 'WARNING',
           rule: `${s} quota = ${config.quotas[s]}/day`,
@@ -220,7 +222,7 @@ export function validateSchedule(input: ValidateInput): ValidationResult {
     }
 
     dayConflicts = conflicts.length - before
-    perDay.push({ date: day.date, working, off, al, byShift, conflicts: dayConflicts })
+    perDay.push({ date: day.date, working, off, al, byShift, quotaMet, conflicts: dayConflicts })
   }
 
   // ---------- Score ----------
