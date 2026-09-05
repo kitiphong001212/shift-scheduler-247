@@ -2,7 +2,7 @@
 import { describe, expect, it } from 'vitest'
 import { buildMonthContext } from '@/services/calendar'
 import { generateSchedule, applyLeaveTargetNormalization } from '@/services/scheduler'
-import { createSeedEmployees } from '@/stores/employeeStore'
+import { createTestEmployees } from './fixtures/employees'
 import {
   cloneDefaultTransitionMatrix,
   DEFAULT_QUOTAS,
@@ -11,7 +11,7 @@ import {
 import type { SchedulerConfig, ShiftAssignmentMap } from '@/types/schedule'
 import type { CellStatus } from '@/types/employee'
 
-const employees = createSeedEmployees()
+const employees = createTestEmployees()
 const assignments: ShiftAssignmentMap = Object.fromEntries(employees.map((e) => [e.id, e.defaultShift]))
 const config: SchedulerConfig = {
   requiredWorking: 10,
