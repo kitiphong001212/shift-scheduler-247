@@ -138,7 +138,7 @@ function add() {
         <div class="md:col-span-2">
           <label class="label">Employee</label>
           <select v-model="form.employeeId" class="input" @change="clearSelection">
-            <option v-for="e in employeeStore.activeEmployees" :key="e.id" :value="e.id">{{ e.name }} ({{ e.code }})</option>
+            <option v-for="e in employeeStore.activeEmployees" :key="e.id" :value="e.id">{{ e.name }}</option>
           </select>
         </div>
         <div>
