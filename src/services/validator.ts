@@ -137,11 +137,30 @@ export function validateSchedule(input: ValidateInput): ValidationResult {
       })
     }
 
+    const employeeRequests = input.leaveRequests.filter(
+      (request) =>
+        request.employeeId === emp.id &&
+        month.days.some((day) => day.date === request.date)
+    )
+    const grantedLeaveRequests = employeeRequests.filter((request) => {
+      const actual = grid.get(cellKey(emp.id, request.date))
+      return actual === 'OFF' || actual === 'AL'
+    })
+    const missedLeaveDates = employeeRequests
+      .filter((request) => {
+        const actual = grid.get(cellKey(emp.id, request.date))
+        return actual !== 'OFF' && actual !== 'AL'
+      })
+      .map((request) => request.date)
+
     perEmployee.push({
       employeeId: emp.id,
       shift: assigned,
       working, off, al,
       totalLeave: off + al,
+      requestedLeave: employeeRequests.length,
+      grantedLeaveRequests: grantedLeaveRequests.length,
+      missedLeaveDates,
       maxConsecutive: maxStreak,
       conflicts: 0
     })
@@ -161,6 +180,23 @@ export function validateSchedule(input: ValidateInput): ValidationResult {
       bump(r.employeeId)
     }
     seen.add(k)
+  }
+
+  // ---------- Requested vs actually granted leave ----------
+  for (const r of input.leaveRequests) {
+    const actual = grid.get(cellKey(r.employeeId, r.date))
+    if (actual === 'OFF' || actual === 'AL') continue
+    const employee = employees.find((e) => e.id === r.employeeId)
+    push({
+      type: 'LEAVE_REQUEST_NOT_GRANTED',
+      severity: 'WARNING',
+      rule: 'Leave may be denied when remaining staff cannot cover every daily shift quota',
+      date: r.date,
+      employeeId: r.employeeId,
+      message: `${employee?.name ?? r.employeeId}: requested ${r.type} but scheduled ${actual ?? 'unassigned'}`,
+      meta: { requested: r.type, actual: actual ?? 'UNASSIGNED' }
+    })
+    bump(r.employeeId)
   }
 
   // ---------- Day level ----------
