@@ -80,13 +80,15 @@ export function registerDatabaseState<T>(
   currentValue: T,
   apply: (value: T) => void
 ): () => void {
-  registrations.set(key, {
+  const registration: StateRegistration = {
     value: currentValue,
     serialized: serialize(currentValue),
     apply: (value) => apply(value as T)
-  })
+  }
+  registrations.set(key, registration)
 
   if (databaseConnection.status === 'connected' && client && userId) {
+    const serializedAtRequest = registration.serialized
     void client
       .from('scheduler_state')
       .select('value')
@@ -98,9 +100,13 @@ export function registerDatabaseState<T>(
           databaseConnection.status = 'error'
           databaseConnection.message = error.message
         } else if (data) {
-          applyRemoteValue(key, data.value)
+          if (registration.serialized === serializedAtRequest) {
+            applyRemoteValue(key, data.value)
+          } else {
+            void upsertState(key, registration.value)
+          }
         } else {
-          void upsertState(key, currentValue)
+          void upsertState(key, registration.value)
         }
       })
   }
@@ -166,6 +172,9 @@ export function initializeDatabase(): Promise<void> {
       if (!user) throw new Error('Supabase did not return a user session')
       userId = user.id
 
+      const localSnapshots = new Map(
+        [...registrations].map(([key, registration]) => [key, registration.serialized])
+      )
       const { data: rows, error } = await client
         .from('scheduler_state')
         .select('state_key,value')
@@ -175,7 +184,11 @@ export function initializeDatabase(): Promise<void> {
       const remote = new Map((rows ?? []).map((row) => [row.state_key as string, row.value]))
       for (const [key, registration] of registrations) {
         if (remote.has(key)) {
-          applyRemoteValue(key, remote.get(key))
+          if (registration.serialized === localSnapshots.get(key)) {
+            applyRemoteValue(key, remote.get(key))
+          } else {
+            pendingWrites.set(key, registration.value)
+          }
         } else {
           pendingWrites.set(key, registration.value)
         }
