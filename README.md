@@ -1,5 +1,39 @@
-# Vue 3 + TypeScript + Vite
+# 24/7 Shift Scheduler
 
-This template should help get you started developing with Vue 3 and TypeScript in Vite. The template uses Vue 3 `<script setup>` SFCs, check out the [script setup docs](https://v3.vuejs.org/api/sfc-script-setup.html#sfc-script-setup) to learn more.
+Vue 3 + Pinia shift scheduling application with optional Supabase persistence.
 
-Learn more about the recommended Project Setup and IDE Support in the [Vue Docs TypeScript Guide](https://vuejs.org/guide/typescript/overview.html#project-setup).
+## Local development
+
+```sh
+npm install
+npm run dev
+```
+
+## Supabase setup
+
+1. Create a Supabase project.
+2. In Authentication → Providers, enable **Anonymous Sign-Ins**.
+3. Run `supabase/migrations/202609050001_create_scheduler_state.sql` in the
+   Supabase SQL Editor (or apply it with the Supabase CLI).
+4. Copy `.env.example` to `.env.local` and set:
+
+```sh
+VITE_SUPABASE_URL=https://your-project-ref.supabase.co
+VITE_SUPABASE_ANON_KEY=your-anon-or-publishable-key
+```
+
+5. Restart the development server.
+
+The app signs in anonymously, hydrates Pinia state from `scheduler_state`, and
+subscribes to realtime updates belonging to that authenticated user. Row Level
+Security prevents users from reading or changing another user's state.
+
+If the environment variables are absent or Supabase is unavailable, the app
+continues using localStorage. The database status appears in the sidebar.
+
+## Checks
+
+```sh
+npm test
+npm run build
+```

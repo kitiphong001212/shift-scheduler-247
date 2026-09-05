@@ -2,7 +2,7 @@
 import { defineStore } from 'pinia'
 import { computed, ref, watch } from 'vue'
 import type { LeaveRequest, LeaveType } from '@/types/leave'
-import { loadState, saveState } from '@/services/storage'
+import { loadState, saveState, syncState } from '@/services/storage'
 import { uid } from '@/utils/date'
 
 function withRequestedAt(list: LeaveRequest[]): LeaveRequest[] {
@@ -14,6 +14,9 @@ function withRequestedAt(list: LeaveRequest[]): LeaveRequest[] {
 export const useLeaveStore = defineStore('leave', () => {
   const requests = ref<LeaveRequest[]>(withRequestedAt(loadState<LeaveRequest[]>('leaveRequests', [])))
   watch(requests, (v) => saveState('leaveRequests', v), { deep: true })
+  syncState('leaveRequests', requests.value, (value) => {
+    requests.value = withRequestedAt(value)
+  })
 
   const byMonth = computed(() => (monthKey: string) =>
     requests.value.filter((r) => r.date.startsWith(monthKey))
