@@ -26,6 +26,8 @@ export const databaseUser = reactive<{
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL?.trim()
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY?.trim()
+const adminUsername = import.meta.env.VITE_ADMIN_USERNAME?.trim().toLowerCase()
+const adminEmail = import.meta.env.VITE_ADMIN_EMAIL?.trim().toLowerCase()
 
 export const isSupabaseConfigured = Boolean(supabaseUrl && supabaseAnonKey)
 
@@ -260,9 +262,14 @@ export function initializeDatabase(): Promise<void> {
   return initialization
 }
 
-export async function signInAdmin(email: string, password: string): Promise<void> {
+export async function signInAdmin(identifier: string, password: string): Promise<void> {
   await initializeDatabase()
   if (!client) throw new Error('Supabase is not configured')
+
+  const normalizedIdentifier = identifier.trim().toLowerCase()
+  const email = adminUsername && adminEmail && normalizedIdentifier === adminUsername
+    ? adminEmail
+    : normalizedIdentifier
 
   databaseConnection.status = 'connecting'
   databaseConnection.message = 'Signing in…'
