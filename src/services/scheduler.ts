@@ -158,7 +158,7 @@ export function generateSchedule(input: GenerateInput): GenerateResult {
         states,
         assignedShift,
         quotas: config.quotas,
-        a1AllowedTransitions: config.a1AllowedTransitions,
+        transitionMatrix: config.transitionMatrix,
         availableByShift,
         offTarget: month.offTarget,
         daysRemaining: month.days.length - dayIndex,
@@ -191,7 +191,7 @@ export function generateSchedule(input: GenerateInput): GenerateResult {
       states,
       homeOf,
       config.quotas,
-      config.a1AllowedTransitions,
+      config.transitionMatrix,
       rng
     )
 
@@ -224,7 +224,7 @@ export function generateSchedule(input: GenerateInput): GenerateResult {
         if (
           isShift(status) &&
           status !== home &&
-          !isTransitionAllowed(status, home, config.a1AllowedTransitions)
+          !isTransitionAllowed(status, home, config.transitionMatrix)
         ) {
           st.trappedStreak++
         } else {
@@ -339,10 +339,10 @@ function legalShiftFor(
   prev: CellStatus | null,
   preferred: ShiftCode,
   home: ShiftCode,
-  a1AllowedTransitions: SchedulerConfig['a1AllowedTransitions']
+  transitionMatrix: SchedulerConfig['transitionMatrix']
 ): ShiftCode {
   const eligible = (s: ShiftCode) =>
-    canWorkShift(home, s) && isTransitionAllowed(prev, s, a1AllowedTransitions)
+    canWorkShift(home, s) && isTransitionAllowed(prev, s, transitionMatrix)
   if (eligible(preferred)) return preferred
   const legal = SHIFT_CODES.filter(eligible)
   if (legal.length === 0) {
@@ -363,14 +363,14 @@ function canAssignShift(
   home: ShiftCode,
   states: Map<string, EmployeeState>,
   allowLastResort: boolean,
-  a1AllowedTransitions: SchedulerConfig['a1AllowedTransitions']
+  transitionMatrix: SchedulerConfig['transitionMatrix']
 ): boolean {
   if (!canWorkShift(home, to)) return false
   const lastResort = isLastResortCover(home, to)
   if (lastResort && !allowLastResort) return false
   if (lastResort && (states.get(empId)?.a6CoverStreak ?? 0) >= MAX_CONSECUTIVE_A6_COVER) return false
   const prev = states.get(empId)?.lastStatus ?? null
-  return isTransitionAllowed(prev, to, a1AllowedTransitions)
+  return isTransitionAllowed(prev, to, transitionMatrix)
 }
 
 /**
@@ -383,7 +383,7 @@ function fillDailyQuotas(
   states: Map<string, EmployeeState>,
   homeOf: Map<string, ShiftCode>,
   quotas: Record<ShiftCode, number>,
-  a1AllowedTransitions: SchedulerConfig['a1AllowedTransitions'],
+  transitionMatrix: SchedulerConfig['transitionMatrix'],
   rng: () => number
 ): Map<string, ShiftCode> {
   const assign = new Map<string, ShiftCode>()
@@ -410,7 +410,7 @@ function fillDailyQuotas(
       const home = homeOf.get(e.id) ?? to
       if (opts.homeOnly && home !== to) return false
       if (opts.requireHome && home !== opts.requireHome) return false
-      return canAssignShift(e.id, to, home, states, allowLastResort, a1AllowedTransitions)
+      return canAssignShift(e.id, to, home, states, allowLastResort, transitionMatrix)
     })
     if (candidates.length === 0) return null
 
@@ -466,7 +466,7 @@ function fillDailyQuotas(
   for (const e of unassigned()) {
     const home = homeOf.get(e.id)!
     const prev = states.get(e.id)?.lastStatus ?? null
-    assign.set(e.id, legalShiftFor(prev, home, home, a1AllowedTransitions))
+    assign.set(e.id, legalShiftFor(prev, home, home, transitionMatrix))
   }
 
   // Pass 5: repair remaining over/under with legal moves
@@ -477,7 +477,7 @@ function fillDailyQuotas(
     states,
     homeOf,
     quotas,
-    a1AllowedTransitions,
+    transitionMatrix,
     rng
   )
   return assign
@@ -491,7 +491,7 @@ function balanceShifts(
   states: Map<string, EmployeeState>,
   homeOf: Map<string, ShiftCode>,
   quotas: Record<ShiftCode, number>,
-  a1AllowedTransitions: SchedulerConfig['a1AllowedTransitions'],
+  transitionMatrix: SchedulerConfig['transitionMatrix'],
   rng: () => number
 ): void {
   const tally = (): Record<ShiftCode, number> => {
@@ -512,7 +512,7 @@ function balanceShifts(
         home,
         states,
         allowLastResort || isLastResortCover(home, to),
-        a1AllowedTransitions
+        transitionMatrix
       )
     })
     if (candidates.length === 0) return null

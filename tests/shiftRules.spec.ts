@@ -1,13 +1,16 @@
 // tests/shiftRules.spec.ts
 import { describe, expect, it } from 'vitest'
-import { isTransitionAllowed, transitionViolation, TRANSITION_MATRIX, SHIFT_CODES, LAST_RESORT_COVER_FOR, canWorkShift } from '@/services/shiftRules'
+import {
+  canWorkShift, cloneDefaultTransitionMatrix, isTransitionAllowed,
+  LAST_RESORT_COVER_FOR, SHIFT_CODES, TRANSITION_MATRIX, transitionViolation
+} from '@/services/shiftRules'
 
 describe('shift transition rules', () => {
   it('matches the documented allow matrix', () => {
     expect(TRANSITION_MATRIX.A1).toEqual({ A1: true, A7: true, A5: true, A6: false })
     expect(TRANSITION_MATRIX.A7).toEqual({ A1: true, A7: true, A5: true, A6: false })
     expect(TRANSITION_MATRIX.A5).toEqual({ A1: false, A7: false, A5: true, A6: true })
-    expect(TRANSITION_MATRIX.A6).toEqual({ A1: false, A7: false, A5: true, A6: true })
+    expect(TRANSITION_MATRIX.A6).toEqual({ A1: false, A7: false, A5: false, A6: true })
   })
 
   it('allows day-to-day transitions from the matrix', () => {
@@ -22,14 +25,21 @@ describe('shift transition rules', () => {
     expect(isTransitionAllowed('A6', 'A6')).toBe(true)
   })
 
-  it('uses configured next shifts after A1', () => {
-    const onlyA1AndA5 = { A1: true, A7: false, A5: true, A6: false }
-    expect(isTransitionAllowed('A1', 'A1', onlyA1AndA5)).toBe(true)
-    expect(isTransitionAllowed('A1', 'A5', onlyA1AndA5)).toBe(true)
-    expect(isTransitionAllowed('A1', 'A7', onlyA1AndA5)).toBe(false)
-    expect(transitionViolation('A1', 'A7', onlyA1AndA5)).toBe('FORBIDDEN')
-    // Other source shifts retain their fixed safety rules.
-    expect(isTransitionAllowed('A5', 'A6', onlyA1AndA5)).toBe(true)
+  it('uses configured next shifts for every source shift', () => {
+    const configured = cloneDefaultTransitionMatrix()
+    configured.A1.A7 = false
+    configured.A7.A5 = false
+    configured.A5.A1 = true
+
+    expect(isTransitionAllowed('A1', 'A7', configured)).toBe(false)
+    expect(isTransitionAllowed('A7', 'A5', configured)).toBe(false)
+    expect(isTransitionAllowed('A5', 'A1', configured)).toBe(true)
+    expect(transitionViolation('A7', 'A5', configured)).toBe('FORBIDDEN')
+
+    // Hard rest cannot be bypassed through configuration.
+    configured.A6.A5 = true
+    expect(isTransitionAllowed('A6', 'A5', configured)).toBe(false)
+    expect(transitionViolation('A6', 'A5', configured)).toBe('A6_NO_REST')
   })
 
   it('forbids blocked transitions', () => {

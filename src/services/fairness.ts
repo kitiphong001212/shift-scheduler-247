@@ -1,6 +1,6 @@
 // src/services/fairness.ts
 import type { Employee, ShiftCode, CellStatus } from '@/types/employee'
-import type { A1AllowedTransitions, OffPolicy } from '@/types/schedule'
+import type { OffPolicy, ShiftTransitionMatrix } from '@/types/schedule'
 import { MAX_CONSECUTIVE_WORKING_DAYS, MAX_CONSECUTIVE_A6_COVER, MAX_TRAPPED_CROSS_COVER, isTransitionAllowed, isShift } from './shiftRules'
 
 export interface EmployeeState {
@@ -24,7 +24,7 @@ export interface OffPickContext {
   states: Map<string, EmployeeState>
   assignedShift: Map<string, ShiftCode>
   quotas: Record<ShiftCode, number>
-  a1AllowedTransitions: A1AllowedTransitions
+  transitionMatrix: ShiftTransitionMatrix
   availableByShift: Record<ShiftCode, number>
   offTarget: number
   daysRemaining: number          // including today
@@ -103,7 +103,7 @@ export function scoreForOff(employee: Employee, ctx: OffPickContext): number {
 
   // Prefer rest for staff stuck off-home who cannot transition back (e.g. A1 parked on A5)
   if (shift && st.lastStatus && isShift(st.lastStatus) && st.lastStatus !== shift) {
-    if (!isTransitionAllowed(st.lastStatus, shift, ctx.a1AllowedTransitions)) {
+    if (!isTransitionAllowed(st.lastStatus, shift, ctx.transitionMatrix)) {
       score += 1_500 + st.trappedStreak * 800
     }
   }

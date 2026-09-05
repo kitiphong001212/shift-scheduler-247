@@ -4,7 +4,7 @@ import { buildMonthContext } from '@/services/calendar'
 import { generateSchedule, applyLeaveTargetNormalization } from '@/services/scheduler'
 import { createSeedEmployees } from '@/stores/employeeStore'
 import {
-  DEFAULT_A1_ALLOWED_TRANSITIONS,
+  cloneDefaultTransitionMatrix,
   DEFAULT_QUOTAS,
   SHIFT_CODES
 } from '@/services/shiftRules'
@@ -16,7 +16,7 @@ const assignments: ShiftAssignmentMap = Object.fromEntries(employees.map((e) => 
 const config: SchedulerConfig = {
   requiredWorking: 10,
   quotas: { ...DEFAULT_QUOTAS },
-  a1AllowedTransitions: { ...DEFAULT_A1_ALLOWED_TRANSITIONS },
+  transitionMatrix: cloneDefaultTransitionMatrix(),
   offPolicy: 'STAFFING_FIRST',
   seed: 42
 }

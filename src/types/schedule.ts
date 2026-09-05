@@ -36,12 +36,13 @@ export interface MonthContext {
 
 export type ShiftAssignmentMap = Record<string, ShiftCode>
 export type A1AllowedTransitions = Record<ShiftCode, boolean>
+export type ShiftTransitionMatrix = Record<ShiftCode, Record<ShiftCode, boolean>>
 
 export interface SchedulerConfig {
   requiredWorking: number
   quotas: Record<ShiftCode, number>
-  /** Allowed next-day shifts after working A1. */
-  a1AllowedTransitions: A1AllowedTransitions
+  /** Allowed next-day shift pairs for every working shift. */
+  transitionMatrix: ShiftTransitionMatrix
   offPolicy: OffPolicy
   seed: number
 }
