@@ -6,7 +6,7 @@ import type { ScheduleEntry, ShiftAssignmentMap, SchedulerConfig } from '@/types
 import type { Conflict } from '@/types/conflict'
 import { generateSchedule } from '@/services/scheduler'
 import { validateSchedule } from '@/services/validator'
-import { loadState, saveState } from '@/services/storage'
+import { loadState, saveState, syncState } from '@/services/storage'
 import { cellKey } from '@/utils/date'
 import { useEmployeeStore } from './employeeStore'
 import { useLeaveStore } from './leaveStore'
@@ -30,6 +30,15 @@ export const useScheduleStore = defineStore('schedule', () => {
   watch(assignmentsByMonth, (v) => saveState('assignments', v), { deep: true })
   watch(entriesByMonth, (v) => saveState('entries', v), { deep: true })
   watch(generatedAtByMonth, (v) => saveState('generatedAt', v), { deep: true })
+  syncState('assignments', assignmentsByMonth.value, (value) => {
+    assignmentsByMonth.value = value
+  })
+  syncState('entries', entriesByMonth.value, (value) => {
+    entriesByMonth.value = value
+  })
+  syncState('generatedAt', generatedAtByMonth.value, (value) => {
+    generatedAtByMonth.value = value
+  })
 
   const monthKey = computed(() => settings.monthContext.monthKey)
   const monthContext = computed(() => settings.monthContext)

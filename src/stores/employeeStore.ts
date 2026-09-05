@@ -2,7 +2,7 @@
 import { defineStore } from 'pinia'
 import { computed, ref, watch } from 'vue'
 import type { Employee, ShiftCode } from '@/types/employee'
-import { loadState, saveState } from '@/services/storage'
+import { loadState, saveState, syncState } from '@/services/storage'
 import { uid } from '@/utils/date'
 
 
@@ -24,6 +24,7 @@ export function createSeedEmployees(): Employee[] {
 export const useEmployeeStore = defineStore('employees', () => {
   const employees = ref<Employee[]>(loadState<Employee[]>('employees', createSeedEmployees()))
   watch(employees, (v) => saveState('employees', v), { deep: true })
+  syncState('employees', employees.value, (value) => { employees.value = value })
 
   const activeEmployees = computed(() => employees.value.filter((e) => e.active))
   const byId = computed(() => {

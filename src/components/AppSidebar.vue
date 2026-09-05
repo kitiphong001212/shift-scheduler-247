@@ -1,13 +1,21 @@
 <!-- src/components/AppSidebar.vue -->
 <script setup lang="ts">
+import { computed } from 'vue'
 import { useScheduleStore } from '@/stores/scheduleStore'
 import { useSettingsStore } from '@/stores/settingsStore'
+import { databaseConnection } from '@/services/database'
 
 defineProps<{ open: boolean }>()
 defineEmits<{ close: [] }>()
 
 const settings = useSettingsStore()
 const schedule = useScheduleStore()
+const databaseTone = computed(() => ({
+  connected: 'bg-emerald-500',
+  connecting: 'bg-amber-400',
+  error: 'bg-rose-500',
+  disabled: 'bg-slate-300'
+}[databaseConnection.status]))
 
 const links = [
   { to: '/dashboard', label: 'Dashboard', icon: '▤' },
@@ -44,6 +52,14 @@ const links = [
     <div class="mt-6 rounded-md border border-slate-200 p-3 text-xs text-slate-500">
       <div class="flex justify-between"><span>Score</span><span class="font-semibold text-slate-800">{{ schedule.score }}/100</span></div>
       <div class="mt-1 flex justify-between"><span>Conflicts</span><span class="font-semibold text-slate-800">{{ schedule.conflicts.length }}</span></div>
+    </div>
+
+    <div class="mt-3 flex items-start gap-2 rounded-md border border-slate-200 p-3 text-xs text-slate-500">
+      <span class="mt-1 h-2 w-2 shrink-0 rounded-full" :class="databaseTone" />
+      <div>
+        <p class="font-semibold text-slate-700">Database</p>
+        <p class="mt-0.5 leading-snug">{{ databaseConnection.message }}</p>
+      </div>
     </div>
   </aside>
 </template>

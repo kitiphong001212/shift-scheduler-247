@@ -11,14 +11,14 @@ import {
   DEFAULT_REQUIRED_WORKING
 } from '@/services/shiftRules'
 import { buildMonthContext } from '@/services/calendar'
-import { loadState, saveState } from '@/services/storage'
+import { loadState, saveState, syncState } from '@/services/storage'
 
 interface SettingsState {
   year: number
   month: number
   requiredWorking: number
   quotas: Record<ShiftCode, number>
-  transitionMatrix: ShiftTransitionMatrix
+  transitionMatrix?: ShiftTransitionMatrix
   /** Legacy setting migrated into transitionMatrix.A1. */
   a1AllowedTransitions?: A1AllowedTransitions
   offPolicy: OffPolicy
@@ -74,6 +74,31 @@ export const useSettingsStore = defineStore('settings', () => {
       }),
     { deep: true }
   )
+
+  syncState<SettingsState>('settings', {
+    year: year.value,
+    month: month.value,
+    requiredWorking: requiredWorking.value,
+    quotas: { ...quotas.value },
+    transitionMatrix: transitionMatrix.value,
+    offPolicy: offPolicy.value
+  }, (value) => {
+    year.value = value.year
+    month.value = value.month
+    requiredWorking.value = value.requiredWorking
+    quotas.value = { ...DEFAULT_QUOTAS, ...value.quotas }
+    const remoteDefaults = cloneDefaultTransitionMatrix()
+    transitionMatrix.value = {
+      A1: {
+        ...remoteDefaults.A1,
+        ...(value.transitionMatrix?.A1 ?? value.a1AllowedTransitions ?? {})
+      },
+      A7: { ...remoteDefaults.A7, ...(value.transitionMatrix?.A7 ?? {}) },
+      A5: { ...remoteDefaults.A5, ...(value.transitionMatrix?.A5 ?? {}) },
+      A6: { ...remoteDefaults.A6, ...(value.transitionMatrix?.A6 ?? {}) }
+    }
+    offPolicy.value = value.offPolicy
+  })
 
   function setMonth(y: number, m: number) { year.value = y; month.value = m }
 
