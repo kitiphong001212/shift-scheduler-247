@@ -1,12 +1,14 @@
 <!-- src/views/MonthlySetup.vue -->
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import SummaryCard from '@/components/SummaryCard.vue'
 import { useSettingsStore } from '@/stores/settingsStore'
 import { useEmployeeStore } from '@/stores/employeeStore'
 import { useScheduleStore } from '@/stores/scheduleStore'
 import { useLeaveStore } from '@/stores/leaveStore'
-import { SHIFT_CODES } from '@/services/shiftRules'
+import {
+  cloneDefaultTransitionMatrix, requiresRestBetween, SHIFT_CODES, STATUS_STYLES
+} from '@/services/shiftRules'
 import { MONTH_NAMES } from '@/utils/date'
 import type { ShiftCode } from '@/types/employee'
 
@@ -17,6 +19,8 @@ const leaveStore = useLeaveStore()
 
 const ctx = computed(() => settings.monthContext)
 const years = Array.from({ length: 7 }, (_, i) => new Date().getFullYear() - 1 + i)
+const draggingShift = ref<ShiftCode | null>(null)
+const dragOverFrom = ref<ShiftCode | null>(null)
 
 const alCountOf = (employeeId: string) =>
   leaveStore.byMonth(ctx.value.monthKey).filter((r) => r.employeeId === employeeId && r.type === 'AL').length
@@ -34,6 +38,35 @@ const groupCounts = computed(() => {
   for (const e of employeeStore.activeEmployees) c[schedule.currentAssignments[e.id] ?? e.defaultShift]++
   return c
 })
+
+const allowedTargets = (from: ShiftCode) =>
+  SHIFT_CODES.filter((to) =>
+    settings.transitionMatrix[from][to] && !requiresRestBetween(from, to)
+  )
+
+function startTransitionDrag(event: DragEvent, shift: ShiftCode) {
+  draggingShift.value = shift
+  event.dataTransfer?.setData('text/plain', shift)
+  if (event.dataTransfer) event.dataTransfer.effectAllowed = 'copy'
+}
+
+function dropTransition(event: DragEvent, from: ShiftCode) {
+  const raw = event.dataTransfer?.getData('text/plain') || draggingShift.value
+  dragOverFrom.value = null
+  draggingShift.value = null
+  if (!raw || !SHIFT_CODES.includes(raw as ShiftCode)) return
+  const to = raw as ShiftCode
+  if (requiresRestBetween(from, to)) return
+  settings.transitionMatrix[from][to] = true
+}
+
+function removeTransition(from: ShiftCode, to: ShiftCode) {
+  settings.transitionMatrix[from][to] = false
+}
+
+function resetTransitions() {
+  settings.transitionMatrix = cloneDefaultTransitionMatrix()
+}
 </script>
 
 <template>
@@ -103,28 +136,76 @@ const groupCounts = computed(() => {
     </div>
 
     <div class="card">
-      <h2 class="text-sm font-semibold">A1 Shift Transition</h2>
-      <p class="mt-1 text-xs text-slate-500">
-        Select which shift an employee may work on the next day after A1.
-        OFF/AL always resets the transition.
-      </p>
-      <div class="mt-3 grid grid-cols-2 gap-3 md:grid-cols-4">
-        <label
+      <div class="flex flex-wrap items-start justify-between gap-2">
+        <div>
+          <h2 class="text-sm font-semibold">Shift Transition Rules</h2>
+          <p class="mt-1 text-xs text-slate-500">
+            Drag a shift into each row to allow it on the next consecutive working day.
+          </p>
+        </div>
+        <button class="btn-ghost" @click="resetTransitions">Reset defaults</button>
+      </div>
+
+      <div class="mt-4 flex flex-wrap items-center gap-2 rounded-md bg-slate-50 p-3">
+        <span class="mr-1 text-xs font-semibold text-slate-500">Drag shift:</span>
+        <button
           v-for="s in SHIFT_CODES"
           :key="s"
-          class="flex items-center gap-2 rounded-md border border-slate-200 px-3 py-2 text-sm"
-          :class="s === 'A6' ? 'cursor-not-allowed bg-slate-50 text-slate-400' : 'cursor-pointer'"
+          type="button"
+          draggable="true"
+          class="cursor-grab rounded border px-3 py-1.5 text-xs font-semibold active:cursor-grabbing"
+          :class="[STATUS_STYLES[s], draggingShift === s ? 'opacity-50' : '']"
+          @dragstart="startTransitionDrag($event, s)"
+          @dragend="draggingShift = null; dragOverFrom = null"
         >
-          <input
-            v-model="settings.a1AllowedTransitions[s]"
-            type="checkbox"
-            :disabled="s === 'A6'"
-          />
-          <span>A1 → {{ s }}</span>
-        </label>
+          {{ s }}
+        </button>
       </div>
-      <p class="mt-2 text-xs text-slate-400">
-        A1 → A6 is unavailable because A1/A7 monthly groups are not eligible to work A6.
+
+      <div class="mt-3 space-y-3">
+        <div
+          v-for="from in SHIFT_CODES"
+          :key="from"
+          class="grid gap-2 rounded-lg border border-slate-200 p-3 md:grid-cols-[90px_1fr]"
+        >
+          <div class="flex items-center">
+            <span class="rounded border px-2 py-1 text-xs font-semibold" :class="STATUS_STYLES[from]">
+              After {{ from }}
+            </span>
+          </div>
+          <div
+            class="flex min-h-12 flex-wrap items-center gap-2 rounded-md border-2 border-dashed p-2 transition"
+            :class="dragOverFrom === from ? 'border-sky-400 bg-sky-50' : 'border-slate-200 bg-white'"
+            @dragover.prevent="dragOverFrom = from"
+            @dragleave.self="dragOverFrom = null"
+            @drop.prevent="dropTransition($event, from)"
+          >
+            <span v-if="!allowedTargets(from).length" class="text-xs text-slate-400">
+              Drop allowed next shifts here
+            </span>
+            <button
+              v-for="to in allowedTargets(from)"
+              :key="to"
+              type="button"
+              class="inline-flex items-center gap-1 rounded border px-2 py-1 text-xs font-semibold"
+              :class="STATUS_STYLES[to]"
+              :title="`Remove ${from} → ${to}`"
+              @click="removeTransition(from, to)"
+            >
+              {{ to }} <span aria-hidden="true">×</span>
+            </button>
+            <span
+              v-if="from === 'A6'"
+              class="rounded bg-slate-100 px-2 py-1 text-[10px] text-slate-500"
+              title="A6 to A5 needs OFF or AL in between"
+            >
+              A5 requires OFF/AL first
+            </span>
+          </div>
+        </div>
+      </div>
+      <p class="mt-3 text-xs text-slate-400">
+        Click an assigned chip to remove it. Monthly home-group eligibility and A6 → A5 rest remain hard safety rules.
       </p>
     </div>
 

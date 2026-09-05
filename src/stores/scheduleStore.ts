@@ -37,7 +37,7 @@ export const useScheduleStore = defineStore('schedule', () => {
   const config = computed<SchedulerConfig>(() => ({
     requiredWorking: settings.requiredWorking,
     quotas: settings.quotas,
-    a1AllowedTransitions: settings.a1AllowedTransitions,
+    transitionMatrix: settings.transitionMatrix,
     offPolicy: settings.offPolicy,
     seed: 1
   }))

@@ -1,6 +1,6 @@
 // src/services/shiftRules.ts
 import type { CellStatus, ShiftCode, ShiftDefinition } from '@/types/employee'
-import type { A1AllowedTransitions } from '@/types/schedule'
+import type { ShiftTransitionMatrix } from '@/types/schedule'
 
 export const SHIFT_CODES: ShiftCode[] = ['A1', 'A7', 'A5', 'A6']
 export const LEAVE_CODES = ['OFF', 'AL'] as const
@@ -20,15 +20,20 @@ export const DEFAULT_REQUIRED_WORKING = 10
 export const MAX_CONSECUTIVE_WORKING_DAYS = 5
 
 /** true = allowed on consecutive working days */
-export const TRANSITION_MATRIX: Record<ShiftCode, Record<ShiftCode, boolean>> = {
+export const TRANSITION_MATRIX: ShiftTransitionMatrix = {
   A1: { A1: true,  A7: true,  A5: true,  A6: false },
   A7: { A1: true,  A7: true,  A5: true,  A6: false },
   A5: { A1: false, A7: false, A5: true,  A6: true  }, // A5 → A6 also used as last-resort cover
-  A6: { A1: false, A7: false, A5: true,  A6: true  }
+  A6: { A1: false, A7: false, A5: false, A6: true  } // A6 → A5 requires OFF/AL first
 }
 
-export const DEFAULT_A1_ALLOWED_TRANSITIONS: A1AllowedTransitions = {
-  ...TRANSITION_MATRIX.A1
+export function cloneDefaultTransitionMatrix(): ShiftTransitionMatrix {
+  return {
+    A1: { ...TRANSITION_MATRIX.A1 },
+    A7: { ...TRANSITION_MATRIX.A7 },
+    A5: { ...TRANSITION_MATRIX.A5 },
+    A6: { ...TRANSITION_MATRIX.A6 }
+  }
 }
 
 /**
@@ -93,26 +98,25 @@ export function isLeave(status: CellStatus | null | undefined): boolean {
 export function isTransitionAllowed(
   prev: CellStatus | null,
   next: CellStatus | null,
-  a1AllowedTransitions: A1AllowedTransitions = DEFAULT_A1_ALLOWED_TRANSITIONS
+  transitionMatrix: ShiftTransitionMatrix = TRANSITION_MATRIX
 ): boolean {
   if (!prev || !next) return true
   if (isLeave(prev) || isLeave(next)) return true
   if (!isShift(prev) || !isShift(next)) return true
   if (requiresRestBetween(prev, next)) return false
-  return prev === 'A1' ? a1AllowedTransitions[next] : TRANSITION_MATRIX[prev][next]
+  return transitionMatrix[prev][next]
 }
 
 /** Distinguish "forbidden matrix" vs "A6 needs rest" for conflict typing. */
 export function transitionViolation(
   prev: CellStatus | null,
   next: CellStatus | null,
-  a1AllowedTransitions: A1AllowedTransitions = DEFAULT_A1_ALLOWED_TRANSITIONS
+  transitionMatrix: ShiftTransitionMatrix = TRANSITION_MATRIX
 ): 'NONE' | 'FORBIDDEN' | 'A6_NO_REST' {
   if (!prev || !next) return 'NONE'
   if (!isShift(prev) || !isShift(next)) return 'NONE'
   if (requiresRestBetween(prev, next)) return 'A6_NO_REST'
-  const allowed = prev === 'A1' ? a1AllowedTransitions[next] : TRANSITION_MATRIX[prev][next]
-  return allowed ? 'NONE' : 'FORBIDDEN'
+  return transitionMatrix[prev][next] ? 'NONE' : 'FORBIDDEN'
 }
 
 export const STATUS_STYLES: Record<CellStatus, string> = {

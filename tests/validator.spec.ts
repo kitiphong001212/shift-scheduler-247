@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { buildMonthContext } from '@/services/calendar'
 import { validateSchedule } from '@/services/validator'
 import {
-  DEFAULT_A1_ALLOWED_TRANSITIONS,
+  cloneDefaultTransitionMatrix,
   DEFAULT_QUOTAS,
   MAX_CONSECUTIVE_WORKING_DAYS
 } from '@/services/shiftRules'
@@ -14,7 +14,7 @@ const month = buildMonthContext(2026, 9)
 const config: SchedulerConfig = {
   requiredWorking: 10,
   quotas: { ...DEFAULT_QUOTAS },
-  a1AllowedTransitions: { ...DEFAULT_A1_ALLOWED_TRANSITIONS },
+  transitionMatrix: cloneDefaultTransitionMatrix(),
   offPolicy: 'STAFFING_FIRST',
   seed: 1
 }
@@ -46,7 +46,10 @@ describe('validateSchedule', () => {
       leaveRequests: [],
       config: {
         ...config,
-        a1AllowedTransitions: { A1: true, A7: false, A5: true, A6: false }
+        transitionMatrix: {
+          ...cloneDefaultTransitionMatrix(),
+          A1: { A1: true, A7: false, A5: true, A6: false }
+        }
       }
     })
     expect(r.conflicts.some((c) =>
