@@ -2,12 +2,26 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import AppSidebar from '@/components/AppSidebar.vue'
+import AdminLogin from '@/views/AdminLogin.vue'
+import { databaseConnection } from '@/services/database'
 
 const sidebarOpen = ref(false)
 </script>
 
 <template>
-  <div class="flex min-h-screen">
+  <div
+    v-if="databaseConnection.status === 'connecting'"
+    class="flex min-h-screen items-center justify-center bg-slate-50"
+  >
+    <div class="text-center">
+      <div class="mx-auto h-8 w-8 animate-spin rounded-full border-2 border-slate-300 border-t-slate-900" />
+      <p class="mt-3 text-sm text-slate-500">{{ databaseConnection.message }}</p>
+    </div>
+  </div>
+
+  <AdminLogin v-else-if="databaseConnection.status === 'unauthenticated'" />
+
+  <div v-else class="flex min-h-screen">
     <AppSidebar :open="sidebarOpen" @close="sidebarOpen = false" />
 
     <div class="flex min-w-0 flex-1 flex-col">
