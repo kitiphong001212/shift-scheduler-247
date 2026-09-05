@@ -2,7 +2,7 @@
 import { ref } from 'vue'
 import { signInAdmin } from '@/services/database'
 
-const email = ref('')
+const username = ref('')
 const password = ref('')
 const error = ref('')
 const submitting = ref(false)
@@ -11,7 +11,7 @@ async function submit() {
   error.value = ''
   submitting.value = true
   try {
-    await signInAdmin(email.value.trim(), password.value)
+    await signInAdmin(username.value, password.value)
   } catch (cause) {
     error.value = cause instanceof Error ? cause.message : 'Unable to sign in'
   } finally {
@@ -31,12 +31,12 @@ async function submit() {
 
       <div class="space-y-4">
         <div>
-          <label class="label" for="admin-email">Email</label>
+          <label class="label" for="admin-username">Username</label>
           <input
-            id="admin-email"
-            v-model="email"
+            id="admin-username"
+            v-model="username"
             class="input"
-            type="email"
+            type="text"
             autocomplete="username"
             required
           />

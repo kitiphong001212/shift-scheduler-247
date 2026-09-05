@@ -21,9 +21,12 @@ npm run dev
 ```sh
 VITE_SUPABASE_URL=https://your-project-ref.supabase.co
 VITE_SUPABASE_ANON_KEY=your-anon-or-publishable-key
+VITE_ADMIN_USERNAME=admin
+VITE_ADMIN_EMAIL=admin@example.com
 ```
 
-5. Restart the development server and sign in with the administrator account.
+5. Restart the development server and sign in with the configured username.
+   The app maps that username to the administrator's Supabase email account.
 
 The app requires an email/password session, hydrates Pinia state from
 `scheduler_state`, and subscribes to realtime updates belonging to that
