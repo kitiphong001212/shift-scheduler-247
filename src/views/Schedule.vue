@@ -109,6 +109,7 @@ const editingConflicts = computed(() =>
           <tr>
             <th class="th">Employee</th><th class="th">Shift</th><th class="th">Working</th>
             <th class="th">OFF</th><th class="th">AL</th><th class="th">Total Leave</th>
+            <th class="th">Leave Requests</th><th class="th">Granted</th><th class="th">Missed Dates</th>
             <th class="th">Max Consec.</th><th class="th">Conflicts</th>
           </tr>
         </thead>
@@ -122,6 +123,17 @@ const editingConflicts = computed(() =>
             </td>
             <td class="td">{{ s.al }}</td>
             <td class="td">{{ s.totalLeave }}</td>
+            <td class="td">{{ s.requestedLeave }}</td>
+            <td
+              class="td font-semibold"
+              :class="s.grantedLeaveRequests === s.requestedLeave ? 'text-emerald-600' : 'text-amber-600'"
+            >
+              {{ s.grantedLeaveRequests }}/{{ s.requestedLeave }}
+              <span v-if="s.requestedLeave > 0 && s.grantedLeaveRequests === s.requestedLeave">✓</span>
+            </td>
+            <td class="td whitespace-nowrap text-amber-700">
+              {{ s.missedLeaveDates.length ? s.missedLeaveDates.map((d) => Number(d.slice(8))).join(', ') : '–' }}
+            </td>
             <td class="td" :class="s.maxConsecutive > MAX_CONSECUTIVE_WORKING_DAYS ? 'text-rose-600 font-semibold' : s.maxConsecutive === MAX_CONSECUTIVE_WORKING_DAYS ? 'text-amber-600 font-semibold' : ''">{{ s.maxConsecutive }}</td>
             <td class="td">{{ s.conflicts }}</td>
           </tr>

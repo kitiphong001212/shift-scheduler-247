@@ -59,7 +59,7 @@ describe('generateSchedule', () => {
     expect(cells.find((c) => c.date === '2026-09-06')?.source).toBe('REQUEST')
   })
 
-  it('grants OFF first-come when requests exceed the daily quota', () => {
+  it('grants OFF first-come only while every shift quota remains feasible', () => {
     const leaveRequests = employees.slice(0, 7).map((e, i) => ({
       id: `x${i}`, employeeId: e.id, date: '2026-09-10', type: 'OFF' as const,
       requestedAt: new Date(Date.UTC(2026, 8, 1, 8, i)).toISOString()
@@ -69,10 +69,25 @@ describe('generateSchedule', () => {
     const onDay = r.schedule.filter((e) => e.date === '2026-09-10')
     expect(onDay.filter((e) => e.shift === 'OFF' || e.shift === 'AL').length).toBe(5)
     expect(onDay.find((e) => e.employeeId === 'EMP001')?.shift).toMatch(/OFF|AL/)
-    expect(onDay.find((e) => e.employeeId === 'EMP005')?.shift).toMatch(/OFF|AL/)
+    // Three early A1 requests fit because an A7 worker can legally cover A1.
+    expect(onDay.find((e) => e.employeeId === 'EMP002')?.shift).toMatch(/OFF|AL/)
+    expect(onDay.find((e) => e.employeeId === 'EMP003')?.shift).toMatch(/OFF|AL/)
+    // A fourth A1 leave would make A1=3 and A7=2 impossible together.
+    expect(onDay.find((e) => e.employeeId === 'EMP004')?.shift).not.toMatch(/OFF|AL/)
+    expect(onDay.find((e) => e.employeeId === 'EMP005')?.shift).not.toMatch(/OFF|AL/)
     expect(onDay.find((e) => e.employeeId === 'EMP006')?.shift).not.toMatch(/OFF|AL/)
     expect(onDay.find((e) => e.employeeId === 'EMP007')?.shift).not.toMatch(/OFF|AL/)
     expect(r.conflicts.some((c) => c.type === 'INSUFFICIENT_STAFF' && c.date === '2026-09-10')).toBe(false)
+    expect(r.conflicts.some((c) => c.type === 'SHIFT_QUOTA_MISMATCH' && c.date === '2026-09-10')).toBe(false)
+    expect(r.conflicts.some((c) =>
+      c.type === 'LEAVE_REQUEST_NOT_GRANTED' &&
+      c.employeeId === 'EMP004' &&
+      c.date === '2026-09-10'
+    )).toBe(true)
+    const denied = r.statistics.perEmployee.find((s) => s.employeeId === 'EMP004')!
+    expect(denied.requestedLeave).toBe(1)
+    expect(denied.grantedLeaveRequests).toBe(0)
+    expect(denied.missedLeaveDates).toEqual(['2026-09-10'])
   })
 
   it('honors requestedAt order, not employee list order', () => {
