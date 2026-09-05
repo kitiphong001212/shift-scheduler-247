@@ -103,6 +103,32 @@ const groupCounts = computed(() => {
     </div>
 
     <div class="card">
+      <h2 class="text-sm font-semibold">A1 Shift Transition</h2>
+      <p class="mt-1 text-xs text-slate-500">
+        Select which shift an employee may work on the next day after A1.
+        OFF/AL always resets the transition.
+      </p>
+      <div class="mt-3 grid grid-cols-2 gap-3 md:grid-cols-4">
+        <label
+          v-for="s in SHIFT_CODES"
+          :key="s"
+          class="flex items-center gap-2 rounded-md border border-slate-200 px-3 py-2 text-sm"
+          :class="s === 'A6' ? 'cursor-not-allowed bg-slate-50 text-slate-400' : 'cursor-pointer'"
+        >
+          <input
+            v-model="settings.a1AllowedTransitions[s]"
+            type="checkbox"
+            :disabled="s === 'A6'"
+          />
+          <span>A1 → {{ s }}</span>
+        </label>
+      </div>
+      <p class="mt-2 text-xs text-slate-400">
+        A1 → A6 is unavailable because A1/A7 monthly groups are not eligible to work A6.
+      </p>
+    </div>
+
+    <div class="card">
       <div class="mb-3 flex items-center justify-between">
         <h2 class="text-sm font-semibold">Monthly Shift Assignment</h2>
         <button class="btn-ghost" @click="schedule.resetAssignmentsToDefault()">Reset seed distribution</button>

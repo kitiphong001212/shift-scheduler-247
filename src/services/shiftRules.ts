@@ -1,5 +1,6 @@
 // src/services/shiftRules.ts
 import type { CellStatus, ShiftCode, ShiftDefinition } from '@/types/employee'
+import type { A1AllowedTransitions } from '@/types/schedule'
 
 export const SHIFT_CODES: ShiftCode[] = ['A1', 'A7', 'A5', 'A6']
 export const LEAVE_CODES = ['OFF', 'AL'] as const
@@ -24,6 +25,10 @@ export const TRANSITION_MATRIX: Record<ShiftCode, Record<ShiftCode, boolean>> = 
   A7: { A1: true,  A7: true,  A5: true,  A6: false },
   A5: { A1: false, A7: false, A5: true,  A6: true  }, // A5 → A6 also used as last-resort cover
   A6: { A1: false, A7: false, A5: true,  A6: true  }
+}
+
+export const DEFAULT_A1_ALLOWED_TRANSITIONS: A1AllowedTransitions = {
+  ...TRANSITION_MATRIX.A1
 }
 
 /**
@@ -85,23 +90,29 @@ export function isLeave(status: CellStatus | null | undefined): boolean {
  * Transition legality between two CONSECUTIVE calendar days.
  * Any leave day resets the chain (A6 -> OFF -> A5 is fine).
  */
-export function isTransitionAllowed(prev: CellStatus | null, next: CellStatus | null): boolean {
+export function isTransitionAllowed(
+  prev: CellStatus | null,
+  next: CellStatus | null,
+  a1AllowedTransitions: A1AllowedTransitions = DEFAULT_A1_ALLOWED_TRANSITIONS
+): boolean {
   if (!prev || !next) return true
   if (isLeave(prev) || isLeave(next)) return true
   if (!isShift(prev) || !isShift(next)) return true
   if (requiresRestBetween(prev, next)) return false
-  return TRANSITION_MATRIX[prev][next]
+  return prev === 'A1' ? a1AllowedTransitions[next] : TRANSITION_MATRIX[prev][next]
 }
 
 /** Distinguish "forbidden matrix" vs "A6 needs rest" for conflict typing. */
 export function transitionViolation(
   prev: CellStatus | null,
-  next: CellStatus | null
+  next: CellStatus | null,
+  a1AllowedTransitions: A1AllowedTransitions = DEFAULT_A1_ALLOWED_TRANSITIONS
 ): 'NONE' | 'FORBIDDEN' | 'A6_NO_REST' {
   if (!prev || !next) return 'NONE'
   if (!isShift(prev) || !isShift(next)) return 'NONE'
   if (requiresRestBetween(prev, next)) return 'A6_NO_REST'
-  return TRANSITION_MATRIX[prev][next] ? 'NONE' : 'FORBIDDEN'
+  const allowed = prev === 'A1' ? a1AllowedTransitions[next] : TRANSITION_MATRIX[prev][next]
+  return allowed ? 'NONE' : 'FORBIDDEN'
 }
 
 export const STATUS_STYLES: Record<CellStatus, string> = {

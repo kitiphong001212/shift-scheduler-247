@@ -22,6 +22,16 @@ describe('shift transition rules', () => {
     expect(isTransitionAllowed('A6', 'A6')).toBe(true)
   })
 
+  it('uses configured next shifts after A1', () => {
+    const onlyA1AndA5 = { A1: true, A7: false, A5: true, A6: false }
+    expect(isTransitionAllowed('A1', 'A1', onlyA1AndA5)).toBe(true)
+    expect(isTransitionAllowed('A1', 'A5', onlyA1AndA5)).toBe(true)
+    expect(isTransitionAllowed('A1', 'A7', onlyA1AndA5)).toBe(false)
+    expect(transitionViolation('A1', 'A7', onlyA1AndA5)).toBe('FORBIDDEN')
+    // Other source shifts retain their fixed safety rules.
+    expect(isTransitionAllowed('A5', 'A6', onlyA1AndA5)).toBe(true)
+  })
+
   it('forbids blocked transitions', () => {
     expect(isTransitionAllowed('A1', 'A6')).toBe(false)
     expect(isTransitionAllowed('A7', 'A6')).toBe(false)
