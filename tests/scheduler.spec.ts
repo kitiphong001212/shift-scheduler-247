@@ -291,46 +291,38 @@ describe('generateSchedule', () => {
     }
   })
 
-  it('forces AUTO AL when OFF cannot reach the weekend target', () => {
-    // Lock most days as MANUAL work; remaining days + quota-safe makeup should cover OFF target
-    const lockedEntries = month.days.slice(0, 18).map((d) => ({
+  it('does not force AUTO AL when OFF cannot reach the weekend target', () => {
+    // Lock most days as MANUAL work so OFF cannot reach target via spare days
+    const lockedEntries = month.days.slice(0, 25).map((d) => ({
       employeeId: 'EMP001', date: d.date, shift: 'A1' as const, source: 'MANUAL' as const
     }))
     const r = generateSchedule({
       employees, month, shiftAssignments: assignments, leaveRequests: [], config, lockedEntries
     })
     const s = r.statistics.perEmployee.find((x) => x.employeeId === 'EMP001')!
-    expect(s.off + s.al).toBeGreaterThanOrEqual(month.offTarget)
+    expect(s.off).toBeLessThan(month.offTarget)
+    // Shortfall stays as OFF warning — do not makeup with forced AUTO AL
     const forcedAl = r.schedule.filter((e) => e.employeeId === 'EMP001' && e.shift === 'AL' && e.source === 'AUTO')
-    expect(forcedAl.length).toBeGreaterThan(0)
+    expect(forcedAl.length).toBe(0)
+    expect(r.conflicts.some((c) => c.type === 'OFF_TARGET_NOT_REACHED' && c.employeeId === 'EMP001')).toBe(true)
   })
 
-  it('applyLeaveTargetNormalization does not break quotas when forcing leave', () => {
-    const date = '2026-09-10'
-    const board: Record<string, CellStatus> = {
-      EMP001: 'A1', EMP002: 'A1', EMP003: 'A1', EMP004: 'A1', // A1=4 over quota
-      EMP005: 'OFF',
-      EMP006: 'A7', EMP007: 'A7',
-      EMP008: 'OFF',
-      EMP009: 'A5', EMP010: 'A5', EMP011: 'A5',
-      EMP012: 'OFF',
-      EMP013: 'A6', EMP014: 'A6',
-      EMP015: 'OFF'
-    }
+  it('applyLeaveTargetNormalization never forces AL to cover OFF shortfall', () => {
+    // EMP001 is MANUAL every day (cannot be converted) and short of OFF;
+    // others already at OFF target. Normalization must not invent AUTO AL.
     const entries = month.days.flatMap((d) =>
       employees.map((e) => ({
         employeeId: e.id,
         date: d.date,
-        shift: (d.date === date ? board[e.id]! : e.defaultShift) as CellStatus,
+        shift: e.defaultShift as CellStatus,
         source: (e.id === 'EMP001' ? 'MANUAL' : 'AUTO') as const
       }))
     )
-    // Everyone except EMP001 already at OFF target on other days
     for (const e of employees) {
       if (e.id === 'EMP001') continue
       let need = month.offTarget
       for (const cell of entries) {
-        if (cell.employeeId !== e.id || cell.date === date) continue
+        if (cell.employeeId !== e.id) continue
         if (need <= 0) break
         cell.shift = 'OFF'
         cell.source = 'AUTO'
@@ -340,20 +332,9 @@ describe('generateSchedule', () => {
 
     applyLeaveTargetNormalization(entries, employees, month.offTarget, config.requiredWorking, config.quotas)
 
-    const day = entries.filter((e) => e.date === date)
-    const byShift = { A1: 0, A7: 0, A5: 0, A6: 0 } as Record<string, number>
-    let working = 0
-    for (const c of day) {
-      if (SHIFT_CODES.includes(c.shift as never)) {
-        working++
-        byShift[c.shift]++
-      }
-    }
-    expect(working).toBeGreaterThanOrEqual(config.requiredWorking)
-    for (const s of SHIFT_CODES) expect(byShift[s]).toBeGreaterThanOrEqual(config.quotas[s])
-
     const mine = entries.filter((e) => e.employeeId === 'EMP001')
-    expect(mine.some((e) => e.shift === 'AL')).toBe(true)
+    expect(mine.filter((e) => e.shift === 'OFF').length).toBe(0)
+    expect(mine.filter((e) => e.shift === 'AL').length).toBe(0)
   })
 
   it('never emits SHIFT_QUOTA_MISMATCH on a normal generate', () => {

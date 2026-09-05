@@ -30,7 +30,8 @@ export function compareOffRequestOrder(a: LeaveRequest, b: LeaveRequest): number
  *    Late requests past daily capacity must work.
  * 4. Leftover daily leave slots: Fair Random OFF for staff still under weekend target,
  *    then Fair Random AL for staffing extras (Pattarapong: target 8 OFF + ~2 AL).
- * 5. Post-pass: convert excess OFF above weekend target → AL; top up shortfall with OFF/AL.
+ * 5. Post-pass: convert excess OFF above weekend target → AL; top up OFF shortfall
+ *    from spare staffing only (do not force AL when OFF cannot reach target).
  */
 export function generateSchedule(input: GenerateInput): GenerateResult {
   const { month, config, shiftAssignments } = input
@@ -248,7 +249,8 @@ export function generateSchedule(input: GenerateInput): GenerateResult {
 /**
  * Normalize personal leave to weekend OFF target:
  * - Excess OFF above target → convert to AL (Pattarapong: 10 OFF → 8 OFF + 2 AL)
- * - Shortfall: top up OFF from spare staffing, then force AL
+ * - Shortfall: top up OFF from spare staffing only
+ * - Do NOT force AL when OFF still cannot reach target (leave shortfall as WARNING)
  * Never convert a working cell if it would drop below requiredWorking or a daily shift quota.
  */
 export function applyLeaveTargetNormalization(
@@ -299,7 +301,7 @@ export function applyLeaveTargetNormalization(
     }
   }
 
-  // Pass B: shortfall — top up OFF from spare days
+  // Pass B: shortfall — top up OFF from spare days only (never force AL)
   for (const emp of employees) {
     let need = offTarget - offCells(emp.id).length
     if (need <= 0) continue
@@ -316,31 +318,6 @@ export function applyLeaveTargetNormalization(
       if (need <= 0) break
       if (!canConvertToLeave(cell)) continue
       cell.shift = 'OFF'
-      cell.source = 'AUTO'
-      need--
-    }
-  }
-
-  // Pass C: remaining shortfall → forced AL (still never break staffing/quotas)
-  for (const emp of employees) {
-    let need = offTarget - offCells(emp.id).length
-    if (need <= 0) continue
-    const cells = (byEmp.get(emp.id) ?? [])
-      .filter((c) => isShift(c.shift))
-      .slice()
-      .sort((a, b) => {
-        const manA = a.source === 'MANUAL' ? 1 : 0
-        const manB = b.source === 'MANUAL' ? 1 : 0
-        if (manA !== manB) return manA - manB
-        const spareA = workingCount(a.date) - requiredWorking
-        const spareB = workingCount(b.date) - requiredWorking
-        if (spareA !== spareB) return spareB - spareA
-        return b.date.localeCompare(a.date)
-      })
-    for (const cell of cells) {
-      if (need <= 0) break
-      if (!canConvertToLeave(cell)) continue
-      cell.shift = 'AL'
       cell.source = 'AUTO'
       need--
     }
