@@ -45,10 +45,7 @@ function submit() {
         <h1 class="text-xl font-semibold">Employees</h1>
         <p class="text-sm text-slate-500">{{ store.activeEmployees.length }} active / {{ store.employees.length }} total · assign shifts monthly in Monthly Setup</p>
       </div>
-      <div class="flex gap-2">
-        <button class="btn-ghost" @click="store.resetToSeed()">Reset demo data</button>
-        <button class="btn-primary" @click="openCreate">+ Add Employee</button>
-      </div>
+      <button class="btn-primary" @click="openCreate">+ Add Employee</button>
     </header>
 
     <div class="card overflow-x-auto">
