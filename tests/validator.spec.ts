@@ -2,13 +2,21 @@
 import { describe, expect, it } from 'vitest'
 import { buildMonthContext } from '@/services/calendar'
 import { validateSchedule } from '@/services/validator'
-import { DEFAULT_QUOTAS, MAX_CONSECUTIVE_WORKING_DAYS } from '@/services/shiftRules'
+import {
+  DEFAULT_A1_ALLOWED_TRANSITIONS,
+  DEFAULT_QUOTAS,
+  MAX_CONSECUTIVE_WORKING_DAYS
+} from '@/services/shiftRules'
 import type { ScheduleEntry, SchedulerConfig } from '@/types/schedule'
 import type { Employee } from '@/types/employee'
 
 const month = buildMonthContext(2026, 9)
 const config: SchedulerConfig = {
-  requiredWorking: 10, quotas: { ...DEFAULT_QUOTAS }, offPolicy: 'STAFFING_FIRST', seed: 1
+  requiredWorking: 10,
+  quotas: { ...DEFAULT_QUOTAS },
+  a1AllowedTransitions: { ...DEFAULT_A1_ALLOWED_TRANSITIONS },
+  offPolicy: 'STAFFING_FIRST',
+  seed: 1
 }
 const emp: Employee = { id: 'E1', code: 'E1', name: 'Test', active: true, defaultShift: 'A6' }
 
@@ -24,6 +32,28 @@ describe('validateSchedule', () => {
       shiftAssignments: { E1: 'A6' }, leaveRequests: [], config
     })
     expect(r.conflicts.some((c) => c.type === 'INVALID_SHIFT_TRANSITION')).toBe(true)
+  })
+
+  it('detects a transition disabled in A1 settings', () => {
+    const a1: Employee = { id: 'E2', code: 'E2', name: 'A1 Config', active: true, defaultShift: 'A1' }
+    const r = validateSchedule({
+      employees: [a1], month,
+      entries: [
+        { employeeId: 'E2', date: '2026-09-10', shift: 'A1', source: 'AUTO' },
+        { employeeId: 'E2', date: '2026-09-11', shift: 'A7', source: 'AUTO' }
+      ],
+      shiftAssignments: { E2: 'A1' },
+      leaveRequests: [],
+      config: {
+        ...config,
+        a1AllowedTransitions: { A1: true, A7: false, A5: true, A6: false }
+      }
+    })
+    expect(r.conflicts.some((c) =>
+      c.type === 'INVALID_SHIFT_TRANSITION' &&
+      c.date === '2026-09-11' &&
+      c.employeeId === 'E2'
+    )).toBe(true)
   })
 
   it('detects A6 → A5 without a rest day', () => {

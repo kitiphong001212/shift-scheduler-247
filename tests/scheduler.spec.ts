@@ -3,14 +3,22 @@ import { describe, expect, it } from 'vitest'
 import { buildMonthContext } from '@/services/calendar'
 import { generateSchedule, applyLeaveTargetNormalization } from '@/services/scheduler'
 import { createSeedEmployees } from '@/stores/employeeStore'
-import { DEFAULT_QUOTAS, SHIFT_CODES } from '@/services/shiftRules'
+import {
+  DEFAULT_A1_ALLOWED_TRANSITIONS,
+  DEFAULT_QUOTAS,
+  SHIFT_CODES
+} from '@/services/shiftRules'
 import type { SchedulerConfig, ShiftAssignmentMap } from '@/types/schedule'
 import type { CellStatus } from '@/types/employee'
 
 const employees = createSeedEmployees()
 const assignments: ShiftAssignmentMap = Object.fromEntries(employees.map((e) => [e.id, e.defaultShift]))
 const config: SchedulerConfig = {
-  requiredWorking: 10, quotas: { ...DEFAULT_QUOTAS }, offPolicy: 'STAFFING_FIRST', seed: 42
+  requiredWorking: 10,
+  quotas: { ...DEFAULT_QUOTAS },
+  a1AllowedTransitions: { ...DEFAULT_A1_ALLOWED_TRANSITIONS },
+  offPolicy: 'STAFFING_FIRST',
+  seed: 42
 }
 
 describe('generateSchedule', () => {
@@ -315,7 +323,7 @@ describe('generateSchedule', () => {
         employeeId: e.id,
         date: d.date,
         shift: e.defaultShift as CellStatus,
-        source: (e.id === 'EMP001' ? 'MANUAL' : 'AUTO') as const
+        source: (e.id === 'EMP001' ? 'MANUAL' : 'AUTO') as 'MANUAL' | 'AUTO'
       }))
     )
     for (const e of employees) {

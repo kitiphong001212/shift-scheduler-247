@@ -1,6 +1,8 @@
 // src/services/scheduler.ts
 import type { CellStatus, Employee, ShiftCode } from '@/types/employee'
-import type { GenerateInput, GenerateResult, ScheduleEntry, AssignmentSource } from '@/types/schedule'
+import type {
+  GenerateInput, GenerateResult, ScheduleEntry, AssignmentSource, SchedulerConfig
+} from '@/types/schedule'
 import type { LeaveRequest } from '@/types/leave'
 import { SHIFT_CODES, MAX_CONSECUTIVE_WORKING_DAYS, MAX_CONSECUTIVE_A6_COVER, MAX_TRAPPED_CROSS_COVER, LAST_RESORT_COVER_FOR, isTransitionAllowed, canWorkShift, isLastResortCover, isShift } from './shiftRules'
 import { pickOffCandidates, pickAlCandidates, type EmployeeState, type OffPickContext } from './fairness'
@@ -156,6 +158,7 @@ export function generateSchedule(input: GenerateInput): GenerateResult {
         states,
         assignedShift,
         quotas: config.quotas,
+        a1AllowedTransitions: config.a1AllowedTransitions,
         availableByShift,
         offTarget: month.offTarget,
         daysRemaining: month.days.length - dayIndex,
@@ -182,7 +185,15 @@ export function generateSchedule(input: GenerateInput): GenerateResult {
     const working = employees.filter((e) => !leaveToday.has(e.id))
     const homeOf = new Map<string, ShiftCode>()
     working.forEach((e) => homeOf.set(e.id, baseShiftOf(e)))
-    const assign = fillDailyQuotas(working, shiftLocked, states, homeOf, config.quotas, rng)
+    const assign = fillDailyQuotas(
+      working,
+      shiftLocked,
+      states,
+      homeOf,
+      config.quotas,
+      config.a1AllowedTransitions,
+      rng
+    )
 
     for (const emp of employees) {
       const leave = leaveToday.get(emp.id)
@@ -213,7 +224,7 @@ export function generateSchedule(input: GenerateInput): GenerateResult {
         if (
           isShift(status) &&
           status !== home &&
-          !isTransitionAllowed(status, home)
+          !isTransitionAllowed(status, home, config.a1AllowedTransitions)
         ) {
           st.trappedStreak++
         } else {
@@ -324,8 +335,14 @@ export function applyLeaveTargetNormalization(
   }
 }
 
-function legalShiftFor(prev: CellStatus | null, preferred: ShiftCode, home: ShiftCode): ShiftCode {
-  const eligible = (s: ShiftCode) => canWorkShift(home, s) && isTransitionAllowed(prev, s)
+function legalShiftFor(
+  prev: CellStatus | null,
+  preferred: ShiftCode,
+  home: ShiftCode,
+  a1AllowedTransitions: SchedulerConfig['a1AllowedTransitions']
+): ShiftCode {
+  const eligible = (s: ShiftCode) =>
+    canWorkShift(home, s) && isTransitionAllowed(prev, s, a1AllowedTransitions)
   if (eligible(preferred)) return preferred
   const legal = SHIFT_CODES.filter(eligible)
   if (legal.length === 0) {
@@ -345,14 +362,15 @@ function canAssignShift(
   to: ShiftCode,
   home: ShiftCode,
   states: Map<string, EmployeeState>,
-  allowLastResort: boolean
+  allowLastResort: boolean,
+  a1AllowedTransitions: SchedulerConfig['a1AllowedTransitions']
 ): boolean {
   if (!canWorkShift(home, to)) return false
   const lastResort = isLastResortCover(home, to)
   if (lastResort && !allowLastResort) return false
   if (lastResort && (states.get(empId)?.a6CoverStreak ?? 0) >= MAX_CONSECUTIVE_A6_COVER) return false
   const prev = states.get(empId)?.lastStatus ?? null
-  return isTransitionAllowed(prev, to)
+  return isTransitionAllowed(prev, to, a1AllowedTransitions)
 }
 
 /**
@@ -365,6 +383,7 @@ function fillDailyQuotas(
   states: Map<string, EmployeeState>,
   homeOf: Map<string, ShiftCode>,
   quotas: Record<ShiftCode, number>,
+  a1AllowedTransitions: SchedulerConfig['a1AllowedTransitions'],
   rng: () => number
 ): Map<string, ShiftCode> {
   const assign = new Map<string, ShiftCode>()
@@ -391,7 +410,7 @@ function fillDailyQuotas(
       const home = homeOf.get(e.id) ?? to
       if (opts.homeOnly && home !== to) return false
       if (opts.requireHome && home !== opts.requireHome) return false
-      return canAssignShift(e.id, to, home, states, allowLastResort)
+      return canAssignShift(e.id, to, home, states, allowLastResort, a1AllowedTransitions)
     })
     if (candidates.length === 0) return null
 
@@ -447,11 +466,20 @@ function fillDailyQuotas(
   for (const e of unassigned()) {
     const home = homeOf.get(e.id)!
     const prev = states.get(e.id)?.lastStatus ?? null
-    assign.set(e.id, legalShiftFor(prev, home, home))
+    assign.set(e.id, legalShiftFor(prev, home, home, a1AllowedTransitions))
   }
 
   // Pass 5: repair remaining over/under with legal moves
-  balanceShifts(working, assign, shiftLocked, states, homeOf, quotas, rng)
+  balanceShifts(
+    working,
+    assign,
+    shiftLocked,
+    states,
+    homeOf,
+    quotas,
+    a1AllowedTransitions,
+    rng
+  )
   return assign
 }
 
@@ -463,6 +491,7 @@ function balanceShifts(
   states: Map<string, EmployeeState>,
   homeOf: Map<string, ShiftCode>,
   quotas: Record<ShiftCode, number>,
+  a1AllowedTransitions: SchedulerConfig['a1AllowedTransitions'],
   rng: () => number
 ): void {
   const tally = (): Record<ShiftCode, number> => {
@@ -477,7 +506,14 @@ function balanceShifts(
       if (shiftLocked.has(e.id)) return false
       const home = homeOf.get(e.id) ?? from
       if (requireHome && home !== requireHome) return false
-      return canAssignShift(e.id, to, home, states, allowLastResort || isLastResortCover(home, to))
+      return canAssignShift(
+        e.id,
+        to,
+        home,
+        states,
+        allowLastResort || isLastResortCover(home, to),
+        a1AllowedTransitions
+      )
     })
     if (candidates.length === 0) return null
     candidates.sort((a, b) => {

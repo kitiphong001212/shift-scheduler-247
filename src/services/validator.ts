@@ -91,7 +91,7 @@ export function validateSchedule(input: ValidateInput): ValidationResult {
         }
       }
 
-      const violation = transitionViolation(prev, status)
+      const violation = transitionViolation(prev, status, config.a1AllowedTransitions)
       if (violation === 'FORBIDDEN') {
         push({
           type: 'INVALID_SHIFT_TRANSITION', severity: 'ERROR',
