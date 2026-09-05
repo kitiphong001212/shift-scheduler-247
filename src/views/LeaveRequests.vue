@@ -29,13 +29,19 @@ const conflictDates = computed(() => {
   return s
 })
 
-function requestOutcome(employeeId: string, date: string, type: LeaveType): 'pending' | 'granted' | 'must-work' | 'conflict' {
+function requestOutcome(
+  employeeId: string,
+  date: string,
+  type: LeaveType
+): 'pending' | 'granted' | 'granted-al' | 'must-work' | 'conflict' {
   if (conflictDates.value.has(date) && type === 'AL') return 'conflict'
   if (!schedule.hasSchedule) return 'pending'
   const cell = schedule.cellMap[cellKey(employeeId, date)]
   if (!cell) return 'pending'
   if (type === 'AL') return cell.shift === 'AL' ? 'granted' : 'conflict'
-  return cell.shift === 'OFF' ? 'granted' : 'must-work'
+  if (cell.shift === 'OFF') return 'granted'
+  if (cell.shift === 'AL') return 'granted-al'
+  return 'must-work'
 }
 
 const rows = computed(() => {
@@ -207,6 +213,7 @@ function add() {
               <ConflictBadge v-if="requestOutcome(r.employeeId, r.date, r.type) === 'must-work'" severity="WARNING" label="Must work" />
               <ConflictBadge v-else-if="requestOutcome(r.employeeId, r.date, r.type) === 'conflict'" severity="ERROR" label="Conflict" />
               <span v-else-if="requestOutcome(r.employeeId, r.date, r.type) === 'pending'" class="text-xs text-slate-400 font-semibold">Pending generate</span>
+              <span v-else-if="requestOutcome(r.employeeId, r.date, r.type) === 'granted-al'" class="text-xs text-emerald-600 font-semibold">Granted (AL)</span>
               <span v-else class="text-xs text-emerald-600 font-semibold">Granted</span>
             </td>
             <td class="td text-right">
