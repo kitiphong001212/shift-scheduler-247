@@ -6,5 +6,9 @@ import router from './router'
 import { initializeDatabase } from './services/database'
 import './style.css'
 
-createApp(App).use(createPinia()).use(router).mount('#app')
-void initializeDatabase()
+async function bootstrap() {
+  await initializeDatabase()
+  createApp(App).use(createPinia()).use(router).mount('#app')
+}
+
+void bootstrap()

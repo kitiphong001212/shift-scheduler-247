@@ -3,7 +3,7 @@
 import { computed } from 'vue'
 import { useScheduleStore } from '@/stores/scheduleStore'
 import { useSettingsStore } from '@/stores/settingsStore'
-import { databaseConnection } from '@/services/database'
+import { databaseConnection, databaseUser, signOutAdmin } from '@/services/database'
 
 defineProps<{ open: boolean }>()
 defineEmits<{ close: [] }>()
@@ -14,6 +14,7 @@ const databaseTone = computed(() => ({
   connected: 'bg-emerald-500',
   connecting: 'bg-amber-400',
   error: 'bg-rose-500',
+  unauthenticated: 'bg-slate-300',
   disabled: 'bg-slate-300'
 }[databaseConnection.status]))
 
@@ -61,5 +62,14 @@ const links = [
         <p class="mt-0.5 leading-snug">{{ databaseConnection.message }}</p>
       </div>
     </div>
+
+    <button
+      v-if="databaseUser.id"
+      class="btn-ghost mt-3 w-full justify-center text-xs"
+      type="button"
+      @click="signOutAdmin"
+    >
+      Sign out
+    </button>
   </aside>
 </template>

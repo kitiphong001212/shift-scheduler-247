@@ -1,7 +1,12 @@
 import { reactive } from 'vue'
-import { createClient, type RealtimeChannel, type SupabaseClient } from '@supabase/supabase-js'
+import {
+  createClient,
+  type RealtimeChannel,
+  type SupabaseClient,
+  type User
+} from '@supabase/supabase-js'
 
-export type DatabaseStatus = 'disabled' | 'connecting' | 'connected' | 'error'
+export type DatabaseStatus = 'disabled' | 'unauthenticated' | 'connecting' | 'connected' | 'error'
 
 export const databaseConnection = reactive<{
   status: DatabaseStatus
@@ -9,6 +14,14 @@ export const databaseConnection = reactive<{
 }>({
   status: 'disabled',
   message: 'Using local storage'
+})
+
+export const databaseUser = reactive<{
+  id: string | null
+  email: string | null
+}>({
+  id: null,
+  email: null
 })
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL?.trim()
@@ -69,6 +82,64 @@ function applyRemoteValue(key: string, value: unknown): void {
   registration.value = value
   registration.serialized = serialized
   registration.apply(value)
+}
+
+async function connectUser(user: User): Promise<void> {
+  if (!client) throw new Error('Supabase client is not initialized')
+
+  databaseConnection.status = 'connecting'
+  databaseConnection.message = 'Loading admin data…'
+  userId = user.id
+  databaseUser.id = user.id
+  databaseUser.email = user.email ?? null
+
+  if (channel) await client.removeChannel(channel)
+
+  const localSnapshots = new Map(
+    [...registrations].map(([key, registration]) => [key, registration.serialized])
+  )
+  const { data: rows, error } = await client
+    .from('scheduler_state')
+    .select('state_key,value')
+    .eq('user_id', userId)
+  if (error) throw error
+
+  const remote = new Map((rows ?? []).map((row) => [row.state_key as string, row.value]))
+  for (const [key, registration] of registrations) {
+    if (remote.has(key)) {
+      if (registration.serialized === localSnapshots.get(key)) {
+        applyRemoteValue(key, remote.get(key))
+      } else {
+        pendingWrites.set(key, registration.value)
+      }
+    } else {
+      pendingWrites.set(key, registration.value)
+    }
+  }
+
+  await flushPendingWrites()
+
+  channel = client
+    .channel(`scheduler-state-${userId}`)
+    .on(
+      'postgres_changes',
+      {
+        event: '*',
+        schema: 'public',
+        table: 'scheduler_state',
+        filter: `user_id=eq.${userId}`
+      },
+      (payload) => {
+        const row = payload.new as { state_key?: string; value?: unknown }
+        if (row.state_key) applyRemoteValue(row.state_key, row.value)
+      }
+    )
+    .subscribe()
+
+  databaseConnection.status = 'connected'
+  databaseConnection.message = databaseUser.email
+    ? `Connected as ${databaseUser.email}`
+    : 'Supabase connected'
 }
 
 /**
@@ -140,8 +211,8 @@ export function saveDatabaseState<T>(key: string, value: T): void {
 }
 
 /**
- * Connects with a Supabase anonymous user, hydrates registered state, then
- * subscribes to realtime changes for the same user.
+ * Restores an authenticated admin session. The app remains locked when no
+ * email/password session exists.
  */
 export function initializeDatabase(): Promise<void> {
   if (initialization) return initialization
@@ -163,68 +234,67 @@ export function initializeDatabase(): Promise<void> {
       const { data: sessionData, error: sessionError } = await client.auth.getSession()
       if (sessionError) throw sessionError
 
-      let user = sessionData.session?.user ?? null
-      if (!user) {
-        const { data, error } = await client.auth.signInAnonymously()
-        if (error) throw error
-        user = data.user
-      }
-      if (!user) throw new Error('Supabase did not return a user session')
-      userId = user.id
-
-      const localSnapshots = new Map(
-        [...registrations].map(([key, registration]) => [key, registration.serialized])
-      )
-      const { data: rows, error } = await client
-        .from('scheduler_state')
-        .select('state_key,value')
-        .eq('user_id', userId)
-      if (error) throw error
-
-      const remote = new Map((rows ?? []).map((row) => [row.state_key as string, row.value]))
-      for (const [key, registration] of registrations) {
-        if (remote.has(key)) {
-          if (registration.serialized === localSnapshots.get(key)) {
-            applyRemoteValue(key, remote.get(key))
-          } else {
-            pendingWrites.set(key, registration.value)
-          }
-        } else {
-          pendingWrites.set(key, registration.value)
-        }
+      const user = sessionData.session?.user ?? null
+      if (!user || user.is_anonymous) {
+        if (user?.is_anonymous) await client.auth.signOut()
+        userId = null
+        databaseUser.id = null
+        databaseUser.email = null
+        databaseConnection.status = 'unauthenticated'
+        databaseConnection.message = 'Admin sign-in required'
+        return
       }
 
-      await flushPendingWrites()
-
-      channel = client
-        .channel(`scheduler-state-${userId}`)
-        .on(
-          'postgres_changes',
-          {
-            event: '*',
-            schema: 'public',
-            table: 'scheduler_state',
-            filter: `user_id=eq.${userId}`
-          },
-          (payload) => {
-            const row = payload.new as { state_key?: string; value?: unknown }
-            if (row.state_key) applyRemoteValue(row.state_key, row.value)
-          }
-        )
-        .subscribe()
-
-      databaseConnection.status = 'connected'
-      databaseConnection.message = 'Supabase connected'
+      await connectUser(user)
     } catch (error) {
-      databaseConnection.status = 'error'
-      databaseConnection.message = `Supabase unavailable — local changes are safe (${errorMessage(error)})`
+      if (userId) {
+        databaseConnection.status = 'error'
+        databaseConnection.message = `Supabase unavailable — local changes are safe (${errorMessage(error)})`
+      } else {
+        databaseConnection.status = 'unauthenticated'
+        databaseConnection.message = `Sign-in unavailable (${errorMessage(error)})`
+      }
     }
   })()
 
   return initialization
 }
 
-export async function disconnectDatabase(): Promise<void> {
+export async function signInAdmin(email: string, password: string): Promise<void> {
+  await initializeDatabase()
+  if (!client) throw new Error('Supabase is not configured')
+
+  databaseConnection.status = 'connecting'
+  databaseConnection.message = 'Signing in…'
+  const { data, error } = await client.auth.signInWithPassword({ email, password })
+  if (error) {
+    databaseConnection.status = 'unauthenticated'
+    databaseConnection.message = 'Admin sign-in required'
+    throw error
+  }
+  if (!data.user) throw new Error('Supabase did not return an authenticated user')
+
+  try {
+    await connectUser(data.user)
+  } catch (error) {
+    databaseConnection.status = 'error'
+    databaseConnection.message = `Supabase unavailable (${errorMessage(error)})`
+    throw error
+  }
+}
+
+export async function signOutAdmin(): Promise<void> {
+  for (const timer of writeTimers.values()) clearTimeout(timer)
+  writeTimers.clear()
+  pendingWrites.clear()
   if (client && channel) await client.removeChannel(channel)
   channel = null
+  if (client) await client.auth.signOut()
+  userId = null
+  databaseUser.id = null
+  databaseUser.email = null
+  Object.keys(localStorage)
+    .filter((key) => key.startsWith('shift-scheduler:v1:'))
+    .forEach((key) => localStorage.removeItem(key))
+  window.location.assign('/')
 }
