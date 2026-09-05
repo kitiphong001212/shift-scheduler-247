@@ -121,6 +121,24 @@ export function generateSchedule(input: GenerateInput): GenerateResult {
         mustWork.add(r.employeeId)
         continue
       }
+      const availableIfGranted = employees.filter(
+        (e) => e.id !== r.employeeId && !leaveToday.has(e.id)
+      )
+      const homeIfGranted = new Map<string, ShiftCode>()
+      availableIfGranted.forEach((e) => homeIfGranted.set(e.id, baseShiftOf(e)))
+      if (!findDailyQuotaAssignment(
+        availableIfGranted,
+        shiftLocked,
+        states,
+        homeIfGranted,
+        config.quotas,
+        config.transitionMatrix
+      )) {
+        // Manual schedule pattern: deny the request when the remaining staff
+        // cannot cover every configured shift quota legally.
+        mustWork.add(r.employeeId)
+        continue
+      }
       const st = states.get(r.employeeId)!
       // Weekend OFF entitlement first; extra requested leave days become AL
       const status = st.offCount < month.offTarget ? 'OFF' : 'AL'
@@ -168,17 +186,44 @@ export function generateSchedule(input: GenerateInput): GenerateResult {
         rng
       }
 
-      // OFF only for people still under weekend target
-      const offPicks = pickOffCandidates(candidates, remainingLeave, ctx)
-      offPicks.forEach((e) => leaveToday.set(e.id, { status: 'OFF', source: 'AUTO' }))
-      remainingLeave -= offPicks.length
-
-      // Staffing extras beyond weekend OFF target → AL (not more OFF)
-      if (remainingLeave > 0) {
-        const alPool = candidates.filter((e) => !leaveToday.has(e.id))
-        pickAlCandidates(alPool, remainingLeave, ctx).forEach((e) =>
-          leaveToday.set(e.id, { status: 'AL', source: 'AUTO' })
+      const quotaFeasibleWithout = (employeeId: string) => {
+        const available = employees.filter(
+          (e) => e.id !== employeeId && !leaveToday.has(e.id)
         )
+        const home = new Map<string, ShiftCode>()
+        available.forEach((e) => home.set(e.id, baseShiftOf(e)))
+        return findDailyQuotaAssignment(
+          available,
+          shiftLocked,
+          states,
+          home,
+          config.quotas,
+          config.transitionMatrix
+        ) !== null
+      }
+
+      // OFF only for people still under weekend target, one at a time so every
+      // additional leave keeps all shift quotas feasible.
+      while (remainingLeave > 0) {
+        const feasible = candidates.filter(
+          (e) => !leaveToday.has(e.id) && quotaFeasibleWithout(e.id)
+        )
+        const picked = pickOffCandidates(feasible, 1, ctx)[0]
+        if (!picked) break
+        leaveToday.set(picked.id, { status: 'OFF', source: 'AUTO' })
+        remainingLeave--
+      }
+
+      // Staffing extras beyond weekend OFF target → AL (not more OFF), while
+      // preserving the same daily quota feasibility.
+      while (remainingLeave > 0) {
+        const feasible = candidates.filter(
+          (e) => !leaveToday.has(e.id) && quotaFeasibleWithout(e.id)
+        )
+        const picked = pickAlCandidates(feasible, 1, ctx)[0]
+        if (!picked) break
+        leaveToday.set(picked.id, { status: 'AL', source: 'AUTO' })
+        remainingLeave--
       }
     }
 
@@ -374,6 +419,90 @@ function canAssignShift(
 }
 
 /**
+ * Find a legal assignment that fills every configured shift quota.
+ * Uses a small bipartite backtracking search (normally 10 daily slots), choosing
+ * the most constrained slot first. Returns null when granting more leave would
+ * make the day impossible.
+ */
+function findDailyQuotaAssignment(
+  working: Employee[],
+  shiftLocked: Map<string, ShiftCode>,
+  states: Map<string, EmployeeState>,
+  homeOf: Map<string, ShiftCode>,
+  quotas: Record<ShiftCode, number>,
+  transitionMatrix: SchedulerConfig['transitionMatrix']
+): Map<string, ShiftCode> | null {
+  const quotaTotal = SHIFT_CODES.reduce((total, shift) => total + quotas[shift], 0)
+  if (working.length < quotaTotal) return null
+
+  const workingIds = new Set(working.map((e) => e.id))
+  const assignment = new Map<string, ShiftCode>()
+  const counts = { A1: 0, A7: 0, A5: 0, A6: 0 } as Record<ShiftCode, number>
+
+  for (const [employeeId, shift] of shiftLocked) {
+    if (!workingIds.has(employeeId)) continue
+    counts[shift]++
+    if (counts[shift] > quotas[shift]) return null
+    assignment.set(employeeId, shift)
+  }
+
+  const slots: ShiftCode[] = []
+  for (const shift of SHIFT_CODES) {
+    for (let i = counts[shift]; i < quotas[shift]; i++) slots.push(shift)
+  }
+
+  const available = working.filter((e) => !assignment.has(e.id))
+  const candidateIdsFor = (shift: ShiftCode, pool: Employee[]) =>
+    pool
+      .filter((e) => canAssignShift(
+        e.id,
+        shift,
+        homeOf.get(e.id) ?? e.defaultShift,
+        states,
+        true,
+        transitionMatrix
+      ))
+      .sort((a, b) => {
+        const homeA = homeOf.get(a.id) ?? a.defaultShift
+        const homeB = homeOf.get(b.id) ?? b.defaultShift
+        const homePreference = Number(homeB === shift) - Number(homeA === shift)
+        if (homePreference !== 0) return homePreference
+        const stateA = states.get(a.id)!
+        const stateB = states.get(b.id)!
+        if (stateA.shiftMoveCount !== stateB.shiftMoveCount) {
+          return stateA.shiftMoveCount - stateB.shiftMoveCount
+        }
+        return a.id.localeCompare(b.id)
+      })
+
+  const solve = (remainingSlots: ShiftCode[], pool: Employee[]): boolean => {
+    if (remainingSlots.length === 0) return true
+
+    let bestIndex = 0
+    let bestCandidates = candidateIdsFor(remainingSlots[0]!, pool)
+    for (let i = 1; i < remainingSlots.length; i++) {
+      const candidates = candidateIdsFor(remainingSlots[i]!, pool)
+      if (candidates.length < bestCandidates.length) {
+        bestIndex = i
+        bestCandidates = candidates
+      }
+    }
+    if (bestCandidates.length === 0) return false
+
+    const shift = remainingSlots[bestIndex]!
+    const nextSlots = remainingSlots.filter((_, i) => i !== bestIndex)
+    for (const employee of bestCandidates) {
+      assignment.set(employee.id, shift)
+      if (solve(nextSlots, pool.filter((e) => e.id !== employee.id))) return true
+      assignment.delete(employee.id)
+    }
+    return false
+  }
+
+  return solve(slots, available) ? assignment : null
+}
+
+/**
  * Fill each day's shift quotas first (home group → cross-cover → last-resort),
  * then place any leftover workers. Avoids parking A1/A7 on A5 when A1 still needs seats.
  */
@@ -480,6 +609,23 @@ function fillDailyQuotas(
     transitionMatrix,
     rng
   )
+
+  const counts = { A1: 0, A7: 0, A5: 0, A6: 0 } as Record<ShiftCode, number>
+  for (const shift of assign.values()) counts[shift]++
+  const quotaTotal = SHIFT_CODES.reduce((total, shift) => total + quotas[shift], 0)
+  const missesQuota = SHIFT_CODES.some((shift) => counts[shift] !== quotas[shift])
+  if (missesQuota && working.length === quotaTotal) {
+    // Greedy preferences can reach a dead end even when a legal arrangement
+    // exists. Use exact matching as the final quota-preserving fallback.
+    return findDailyQuotaAssignment(
+      working,
+      shiftLocked,
+      states,
+      homeOf,
+      quotas,
+      transitionMatrix
+    ) ?? assign
+  }
   return assign
 }
 

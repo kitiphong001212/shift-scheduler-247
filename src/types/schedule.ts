@@ -54,6 +54,9 @@ export interface EmployeeStat {
   off: number
   al: number
   totalLeave: number
+  requestedLeave: number
+  grantedLeaveRequests: number
+  missedLeaveDates: string[]
   maxConsecutive: number
   conflicts: number
 }
